@@ -1,0 +1,990 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>黄石 + 大提顿 · 7日深度游</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        /* ── Base ── */
+        :root { --primary: #2e7d32; --bg: #e8f5e9; --text: #333; }
+        *, *::before, *::after { box-sizing: border-box; }
+        body, html {
+            margin: 0; padding: 0; height: 100%;
+            font-family: 'Segoe UI', sans-serif;
+            background-color: var(--bg); color: var(--text);
+            display: flex; justify-content: center; align-items: center;
+            overflow: hidden;
+        }
+
+        /* ── Layout ── */
+        #main-wrapper {
+            width: 90vw; height: 85vh; min-width: 800px;
+            display: flex;
+            background: #fff; border-radius: 16px;
+            box-shadow: 0 15px 50px rgba(0,0,0,0.2);
+            overflow: hidden; position: relative;
+        }
+        #map-container { width: 50%; height: 100%; border-right: 2px solid #eee; position: relative; z-index: 1; }
+        #map { width: 100%; height: 100%; }
+
+        /* Itinerary panel */
+        #itinerary-container {
+            width: 50%; height: 100%;
+            display: flex; flex-direction: column;
+            background: #faf9f6;
+            position: relative; z-index: 10;
+        }
+
+        /* ── Edit bar ── */
+        #edit-bar {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 9px 16px;
+            background: #fff;
+            border-bottom: 1px solid #e8e8e8;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+            flex-shrink: 0;
+        }
+        #sync-status { display: flex; align-items: center; gap: 7px; font-size: 12px; color: #888; }
+        .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #27ae60; flex-shrink: 0; }
+        .status-dot.syncing { background: #f39c12; animation: pulse 1s ease-in-out infinite; }
+        .status-dot.error   { background: #e74c3c; }
+        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+        #edit-controls { display: flex; gap: 8px; }
+        .btn {
+            padding: 7px 15px; border: none; border-radius: 8px;
+            font-size: 13px; font-weight: 600; cursor: pointer;
+            transition: background .18s, opacity .18s;
+        }
+        .btn:disabled { opacity: .55; cursor: not-allowed; }
+        #btn-edit   { background: #ecf0f1; color: #2c3e50; }
+        #btn-edit:hover:not(:disabled)   { background: #d5dbde; }
+        #btn-save   { background: var(--primary); color: #fff; }
+        #btn-save:hover:not(:disabled)   { background: #1b5e20; }
+        #btn-cancel { background: #ecf0f1; color: #7f8c8d; }
+        #btn-cancel:hover:not(:disabled) { background: #d5dbde; }
+
+        /* ── Scroll area ── */
+        #itinerary-scroll {
+            flex: 1; overflow-y: scroll;
+            padding: 20px 28px 36px;
+            -webkit-overflow-scrolling: touch;
+            position: relative;
+        }
+        #itinerary-scroll.editing { background: #fffef5; }
+
+        /* ── Loading overlay ── */
+        #loading-overlay {
+            position: absolute; inset: 0;
+            background: rgba(250,249,246,.92);
+            display: flex; flex-direction: column;
+            align-items: center; justify-content: center;
+            gap: 12px; z-index: 50;
+        }
+        .spinner {
+            width: 34px; height: 34px;
+            border: 3px solid #ddd; border-top-color: var(--primary);
+            border-radius: 50%; animation: spin .75s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .loading-text { font-size: 13px; color: #999; }
+
+        /* ── View mode typography ── */
+        h1 { color: var(--primary); font-size: 22px; margin: 0 0 10px; border-bottom: 3px solid var(--primary); padding-bottom: 5px; display: inline-block; }
+        .intro { font-size: 13px; color: #666; margin-bottom: 20px; line-height: 1.55; }
+        .day-card {
+            background: #fff;
+            border-left: 4px solid var(--primary);
+            border-radius: 0 8px 8px 0;
+            padding: 15px; margin-bottom: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,.05);
+        }
+        .day-title { font-size: 16px; font-weight: bold; color: #2c3e50; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+        .drive-time { font-size: 11px; color: #fff; background: var(--primary); padding: 3px 8px; border-radius: 12px; white-space: nowrap; flex-shrink: 0; }
+        .highlight-block { font-size: 13px; line-height: 1.6; color: #555; margin-bottom: 4px; }
+        .highlight-block:last-child { margin-bottom: 0; }
+
+        /* Highlights editor */
+        .highlights-editor { display: flex; flex-direction: column; gap: 6px; }
+        .highlight-item { display: flex; gap: 7px; align-items: flex-start; }
+        .highlight-item textarea { flex: 1; resize: vertical; min-height: 52px; }
+        .highlight-item .tag-delete-btn { margin-top: 2px; flex-shrink: 0; }
+        .spot-tags { margin-top: 12px; display: flex; flex-wrap: wrap; gap: 10px; }
+        .spot-tag {
+            display: inline-block; background: #ecf0f1; color: #34495e;
+            padding: 8px 15px; border-radius: 6px;
+            font-size: 12px; font-weight: 600; text-decoration: none;
+            cursor: pointer; position: relative; z-index: 20; touch-action: manipulation;
+        }
+        .spot-tag:hover { background: var(--primary); color: #fff; }
+        .hotel-info {
+            display: flex; align-items: flex-start; gap: 12px;
+            margin-top: 12px; padding: 12px;
+            background: #f1f8e9; border-left: 3px solid var(--primary); border-radius: 4px;
+        }
+        .hotel-icon {
+            width: 36px; height: 36px; background: var(--primary);
+            border-radius: 50%; display: flex; align-items: center;
+            justify-content: center; color: #fff; font-size: 18px; flex-shrink: 0;
+        }
+        .hotel-details { flex: 1; min-width: 0; }
+        .hotel-name { font-size: 13px; font-weight: bold; color: #2c3e50; margin-bottom: 3px; }
+        .hotel-name a { color: var(--primary); text-decoration: none; }
+        .hotel-name a:hover { text-decoration: underline; }
+        .hotel-address { font-size: 11px; color: #7f8c8d; line-height: 1.4; }
+
+        /* ── Edit mode styles ── */
+        .edit-banner {
+            background: #fffbcc; border: 1px solid #e0c000;
+            border-radius: 8px; padding: 9px 14px; margin-bottom: 16px;
+            font-size: 12px; color: #7a6000;
+        }
+        .edit-section { margin-bottom: 14px; }
+        .edit-label {
+            display: block; font-size: 10px; font-weight: 700;
+            color: #aaa; text-transform: uppercase; letter-spacing: .6px;
+            margin-bottom: 4px;
+        }
+        .edit-field {
+            width: 100%;
+            border: 1.5px solid #dcc700;
+            border-radius: 6px; padding: 7px 10px;
+            font-family: inherit; font-size: 13px; color: #333;
+            background: #fff; outline: none;
+            transition: border-color .2s, box-shadow .2s;
+        }
+        .edit-field:focus {
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(46,125,50,.12);
+        }
+        .edit-textarea { resize: vertical; min-height: 62px; }
+        .day-card.editing { border-left-color: #d4ac00; }
+
+        .edit-row { margin-bottom: 10px; }
+        .day-title-row { display: flex; gap: 10px; margin-bottom: 10px; }
+        .day-title-row .main-title { flex: 1; }
+        .day-title-row .drive-col  { width: 135px; flex-shrink: 0; }
+
+        /* Spot editor */
+        .spots-editor { display: flex; flex-direction: column; gap: 7px; }
+        .spot-editor-item {
+            display: flex; flex-direction: column; gap: 5px;
+            background: #f0f7ff; border: 1px dashed #7aaddf;
+            border-radius: 6px; padding: 8px;
+        }
+        .spot-editor-top { display: flex; gap: 7px; align-items: center; }
+        .spot-editor-top .edit-field { flex: 1; margin: 0; }
+        .spot-editor-item > .edit-field { margin: 0; }
+        .tag-delete-btn {
+            background: #e74c3c; color: #fff; border: none;
+            border-radius: 50%; width: 24px; height: 24px;
+            cursor: pointer; font-size: 13px; flex-shrink: 0;
+            display: flex; align-items: center; justify-content: center;
+            line-height: 1;
+        }
+        .tag-delete-btn:hover { background: #c0392b; }
+        .add-tag-btn {
+            display: inline-flex; align-items: center; gap: 4px;
+            background: #27ae60; color: #fff; border: none;
+            border-radius: 6px; padding: 7px 12px;
+            font-size: 12px; font-weight: 600; cursor: pointer;
+            align-self: flex-start; margin-top: 3px;
+        }
+        .add-tag-btn:hover { background: #219a52; }
+
+        /* Hotel edit block */
+        .hotel-edit-block {
+            margin-top: 12px; padding: 12px;
+            background: #f1f8e9; border-left: 3px solid var(--primary); border-radius: 4px;
+        }
+        .hotel-edit-header { font-size: 13px; font-weight: bold; color: #2c3e50; margin-bottom: 10px; }
+
+        /* ── Toast ── */
+        #toaster {
+            position: fixed; bottom: 24px; left: 50%;
+            transform: translateX(-50%) translateY(12px);
+            background: #2c3e50; color: #fff;
+            padding: 10px 20px; border-radius: 8px;
+            font-size: 13px; opacity: 0;
+            transition: opacity .25s, transform .25s;
+            pointer-events: none; z-index: 9999;
+        }
+        #toaster.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+        #toaster.success { background: #27ae60; }
+        #toaster.error   { background: #e74c3c; }
+
+        /* ── Car animation ── */
+        .car-div-icon { background: none !important; border: none !important; }
+        .car-emoji {
+            font-size: 28px; display: block; line-height: 1;
+            transition: transform 0.25s ease;
+            filter: drop-shadow(0 2px 5px rgba(0,0,0,0.35));
+            transform-origin: center center;
+        }
+        .day-card { cursor: pointer; transition: box-shadow .2s; }
+        .day-card:hover:not(.editing) { box-shadow: 0 4px 18px rgba(46,125,50,.18); }
+        .day-card.active-day { box-shadow: 0 0 0 2.5px var(--primary), 0 4px 18px rgba(46,125,50,.22) !important; }
+
+        /* ── Tips badge ── */
+        .tip-badge {
+            display: inline-block; font-size: 11px;
+            background: #fff3e0; color: #e65100;
+            border: 1px solid #ffb74d; border-radius: 4px;
+            padding: 2px 7px; margin-left: 6px; vertical-align: middle;
+        }
+    </style>
+</head>
+<body>
+    <div id="main-wrapper">
+        <div id="map-container"><div id="map"></div></div>
+
+        <div id="itinerary-container">
+            <div id="edit-bar">
+                <div id="sync-status">
+                    <span class="status-dot syncing" id="status-dot"></span>
+                    <span id="status-text">加载中...</span>
+                </div>
+                <div id="edit-controls">
+                    <button class="btn" id="btn-edit">✏️ 编辑</button>
+                    <button class="btn" id="btn-save"   hidden>💾 保存</button>
+                    <button class="btn" id="btn-cancel" hidden>✕ 取消</button>
+                </div>
+            </div>
+
+            <div id="itinerary-scroll">
+                <div id="loading-overlay">
+                    <div class="spinner"></div>
+                    <div class="loading-text">正在加载...</div>
+                </div>
+                <div id="itinerary-content"></div>
+            </div>
+        </div>
+    </div>
+
+    <div id="toaster"></div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        /* ─── LocalStorage persistence ───────────────────────────────────── */
+        const STORAGE_KEY = 'yellowstoneroute_v1';
+
+        function loadData() {
+            try {
+                const raw = localStorage.getItem(STORAGE_KEY);
+                return raw ? JSON.parse(raw) : null;
+            } catch(e) { return null; }
+        }
+
+        function saveLocalData(data) {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+        }
+
+        /* ─── Default / seed data ────────────────────────────────────────── */
+        const DEFAULT_DATA = {
+            meta: {
+                title: "🌋 黄石 + 大提顿 · 7日深度游 (5月)",
+                intro: "5人2SUV，年票$80/辆可同时覆盖大提顿+黄石。点击行程卡片可在地图上追踪路线动画。点击景点标签跳转小红书。"
+            },
+            days: [
+                {
+                    title:     "Day 0 · 5月12日 · SLC落地 → 杰克逊",
+                    driveTime: "🚗 ~4h",
+                    highlights: [
+                        "下午SLC机场取2台SUV（推荐National或Enterprise，提前网上预订全险）。取车后先去附近沃尔玛大采购：2箱矿泉水、能量棒、零食、防晒SPF50+、驱虫喷雾、急救药——这是全程唯一大采购机会，园区内超市价格是外面2-3倍。",
+                        "走I-15 N转US-89 N，途中Logan加满油（进入怀俄明州后加油站稀少），约4小时抵达杰克逊。晚饭在小镇随意吃，推荐Sidewinders美式汉堡或Thai Me Up泰式料理。"
+                    ],
+                    spots: [
+                        { label: "杰克逊小镇", url: "https://www.xiaohongshu.com/search_result?keyword=Jackson+Hole+小镇" },
+                        { label: "Sidewinders", url: "https://www.xiaohongshu.com/search_result?keyword=Sidewinders+Jackson" },
+                        { label: "Thai Me Up", url: "https://www.xiaohongshu.com/search_result?keyword=Thai+Me+Up+Jackson" }
+                    ],
+                    hotel: {
+                        name:    "Hampton Inn & Suites Jackson Hole",
+                        url:     "https://www.hilton.com/en/hotels/jackhdhx-hampton-inn-and-suites-jackson-hole/",
+                        address: "85 Airport Loop Rd, Jackson, WY 83001"
+                    }
+                },
+                {
+                    title:     "Day 1 · 5月13日 · 大提顿国家公园全天",
+                    driveTime: "🚗 园内循环",
+                    highlights: [
+                        "08:30 出发 → Oxbow Bend 观景台（GPS: 43.8584, -110.5572）。北美最经典摄影机位：Mt. Moran雪峰倒映蛇河，8:30到有约70%概率还有倒影，5月雪量最多山顶最白。停留约45分钟。",
+                        "前往Jackson Lake Lodge落地窗拍Mt. Moran，时间充裕可开Signal Mountain Summit Road（5英里盘山，顶部360°俯瞰，提前确认5月是否开放）。",
+                        "11:30 Jenny Lake South Trailhead → 乘渡船过湖（往返$18/人）→ 步行15分钟到Hidden Falls瀑布 → 再爬20分钟到Inspiration Point俯瞰全湖和Teton山脉，全程约2.5小时。",
+                        "午饭：Dornan's at Moose（10 Moose Rd）。草地正对大提顿山脉，披萨约$18，5人约¥100。",
+                        "下午：变容教堂（窗景正对三尖山，5分钟）→ Moose-Wilson Road（8英里砾石路，5月是驼鹿产崽期，看到妈妈带小崽概率极大）。",
+                        "傍晚逛杰克逊Town Square，晚饭推荐Bubba's Bar-B-Que多人份烤肉，或提前订位Snake River Grill。"
+                    ],
+                    spots: [
+                        { label: "Oxbow Bend", url: "https://www.xiaohongshu.com/search_result?keyword=Oxbow+Bend+大提顿" },
+                        { label: "Jenny Lake渡船", url: "https://www.xiaohongshu.com/search_result?keyword=Jenny+Lake+大提顿" },
+                        { label: "Hidden Falls", url: "https://www.xiaohongshu.com/search_result?keyword=Hidden+Falls+Teton" },
+                        { label: "Inspiration Point", url: "https://www.xiaohongshu.com/search_result?keyword=Inspiration+Point+Teton" },
+                        { label: "变容教堂", url: "https://www.xiaohongshu.com/search_result?keyword=变容教堂+大提顿+Chapel+Transfiguration" },
+                        { label: "Moose-Wilson Road驼鹿", url: "https://www.xiaohongshu.com/search_result?keyword=Moose+Wilson+Road+驼鹿" }
+                    ],
+                    hotel: {
+                        name:    "Hampton Inn & Suites Jackson Hole",
+                        url:     "https://www.hilton.com/en/hotels/jackhdhx-hampton-inn-and-suites-jackson-hole/",
+                        address: "85 Airport Loop Rd, Jackson, WY 83001"
+                    }
+                },
+                {
+                    title:     "Day 2 · 5月14日 · 进黄石 · 地热精华线 · 换住西黄石",
+                    driveTime: "🚗 ~3h",
+                    highlights: [
+                        "08:30 出发，约1小时到黄石南门。年票$80/辆包含大提顿+黄石，强烈推荐购入。",
+                        "第一站 West Thumb间歇泉盆地（约30分钟）。5月黄石湖可能仍有浮冰，热泉与冰湖并存是夏季完全看不到的奇景。",
+                        "【全程最不能错过】大棱镜温泉——停车必须停在Fairy Falls Trailhead（GPS: 44.5305, -110.8394），不要停官方大棱镜停车场。从步道走约0.8英里上坡20分钟到俯瞰平台，可看到完整彩虹圆形。停留约1小时。",
+                        "喷泉彩锅盆地（0.5英里环线，约45分钟）。Clepsydra Geyser几乎不间断喷发，5月蒸汽柱比夏天高2-3倍。",
+                        "午饭：Old Faithful Snow Lodge的Bear Paw Deli（汉堡$14，无需等位）。下午2点左右到老忠实，先在游客中心查屏幕或下载Geyser Times App确认下次喷发时间，看完喷发再走Morning Glory Pool等步道（1.3英里环线，约1.5小时）。",
+                        "傍晚出西门入住西黄石。今晚起住3晚付费，第4晚免费（IHG住3送1）。"
+                    ],
+                    spots: [
+                        { label: "West Thumb间歇泉", url: "https://www.xiaohongshu.com/search_result?keyword=West+Thumb+黄石" },
+                        { label: "大棱镜温泉", url: "https://www.xiaohongshu.com/search_result?keyword=大棱镜+Grand+Prismatic" },
+                        { label: "喷泉彩锅盆地", url: "https://www.xiaohongshu.com/search_result?keyword=Fountain+Paint+Pot+黄石" },
+                        { label: "老忠实间歇泉", url: "https://www.xiaohongshu.com/search_result?keyword=老忠实+Old+Faithful+黄石" },
+                        { label: "Morning Glory Pool", url: "https://www.xiaohongshu.com/search_result?keyword=Morning+Glory+Pool+黄石" }
+                    ],
+                    hotel: {
+                        name:    "Holiday Inn West Yellowstone",
+                        url:     "https://www.ihg.com/holidayinn/hotels/us/en/west-yellowstone/ylsmt/hoteldetail",
+                        address: "315 Yellowstone Ave, West Yellowstone, MT 59758"
+                    }
+                },
+                {
+                    title:     "Day 3 · 5月15日 · Norris · 猛犸 · 拉玛山谷",
+                    driveTime: "🚗 园内~3h",
+                    highlights: [
+                        "08:30从西黄石出发，2分钟进西门，约50分钟到Norris间歇泉盆地。走Back Basin Loop（1.5英里，寻找Steamboat Geyser和Echinus Geyser）和Porcelain Basin Loop（1.25英里，开阔彩色地热地），合计约1.5小时。5月冷空气让整个Norris盆地笼罩在白雾中，是全年蒸汽最壮观的时段。",
+                        "开约21英里到猛犸热泉，重点游下台地：Palette Spring颜色最丰富（橙黄绿渐变），Liberty Cap是6米高石灰华石锥，约1小时。",
+                        "午饭在Roosevelt Lodge（野牛香肠炒蛋$16，越橘薄饼$14，提前确认5月是否开放）。",
+                        "下午2:30前往拉玛山谷，重点停靠Slough Creek路口（GPS: 44.9281, -110.2371）和Lamar River开阔处。5月特供体验：橙红色野牛幼崽（Red Dogs）跟着妈妈在绿草地奔跑，6月后颜色变深就消失了，几乎100%可见！遇到其他车停靠并架望远镜时跟上，这是黄石spotting community的默契，护林员也会告知动物位置。停留约2小时。",
+                        "顺路看Tower Fall（40米瀑布，5分钟步行），约18:00出园回西黄石。"
+                    ],
+                    spots: [
+                        { label: "Norris间歇泉盆地", url: "https://www.xiaohongshu.com/search_result?keyword=Norris+Geyser+Basin+黄石" },
+                        { label: "猛犸热泉", url: "https://www.xiaohongshu.com/search_result?keyword=猛犸热泉+Mammoth+Hot+Springs" },
+                        { label: "拉玛山谷野牛幼崽", url: "https://www.xiaohongshu.com/search_result?keyword=拉玛山谷+Lamar+Valley+野牛" },
+                        { label: "Red Dogs野牛崽", url: "https://www.xiaohongshu.com/search_result?keyword=Red+Dogs+Bison+黄石" },
+                        { label: "Tower Fall", url: "https://www.xiaohongshu.com/search_result?keyword=Tower+Fall+黄石" }
+                    ],
+                    hotel: {
+                        name:    "Holiday Inn West Yellowstone",
+                        url:     "https://www.ihg.com/holidayinn/hotels/us/en/west-yellowstone/ylsmt/hoteldetail",
+                        address: "315 Yellowstone Ave, West Yellowstone, MT 59758"
+                    }
+                },
+                {
+                    title:     "Day 4 · 5月16日 · 黄石大峡谷",
+                    driveTime: "🚗 园内~2h",
+                    highlights: [
+                        "08:30出发，约1小时到Canyon Village。先去Hayden Valley（9:30到，约1.5小时）。5月是全年看灰熊概率最高的时段——灰熊从冬眠醒来后2个月，饥饿又带幼崽，活跃度全年最高，概率约25-35%。野牛幼崽几乎100%可见，沙丘鹤也常见。",
+                        "随后去泥浆火山（0.75英里环线，约35分钟）。Dragon's Mouth Spring发出轰鸣声配合翻腾泥浆，是全园最具冲击力的感官体验。",
+                        "午饭在Canyon Village食堂，顺便这里加满油（园内少数有加油站的地方）。",
+                        "下午重点游黄石大峡谷：Artist Point（GPS: 44.7188, -110.4672）——5月雪融水让Lower Falls水量达全年最大，白色瀑布宽度是夏季2倍。走完南缘步道（Uncle Tom's Trail 282级楼梯，是最近看瀑布的方式），再去北缘Lookout Point和Inspiration Point（角度完全不同，能看到峡谷全貌）。",
+                        "有余力：晚饭后二刷Artist Point看傍晚金光（19:30-20:30，太阳低角度峡谷从黄变橙红，游客减少80%）。单程45分钟，量力而为，非常值得。"
+                    ],
+                    spots: [
+                        { label: "Hayden Valley灰熊", url: "https://www.xiaohongshu.com/search_result?keyword=Hayden+Valley+灰熊+黄石" },
+                        { label: "泥浆火山", url: "https://www.xiaohongshu.com/search_result?keyword=Mud+Volcano+Dragon+Mouth+黄石" },
+                        { label: "Artist Point峡谷", url: "https://www.xiaohongshu.com/search_result?keyword=Artist+Point+黄石大峡谷" },
+                        { label: "Uncle Tom's Trail", url: "https://www.xiaohongshu.com/search_result?keyword=Uncle+Tom+Trail+黄石" },
+                        { label: "Lower Falls瀑布", url: "https://www.xiaohongshu.com/search_result?keyword=Lower+Falls+黄石大峡谷" }
+                    ],
+                    hotel: {
+                        name:    "Holiday Inn West Yellowstone",
+                        url:     "https://www.ihg.com/holidayinn/hotels/us/en/west-yellowstone/ylsmt/hoteldetail",
+                        address: "315 Yellowstone Ave, West Yellowstone, MT 59758"
+                    }
+                },
+                {
+                    title:     "Day 5 · 5月17日 · 拉玛最后道别 + Firehole收尾",
+                    driveTime: "🚗 园内~3h",
+                    highlights: [
+                        "08:30出发，1.5小时到拉玛山谷做最后动物观察（10:00到，Red Dogs最后一次道别，黑熊上午约20%概率）。午饭在Roosevelt Lodge或自带野餐。",
+                        "下午沿原路返回：Firehole Lake Drive（6英里单行道，入口看Great Fountain Geyser预测时间牌，White Dome Geyser约30分钟喷发一次）。",
+                        "Firehole Canyon Drive（3英里峡谷路，夏季可游泳的天然温泉峡谷，5月水温刚好）。",
+                        "顺路看Black Sand Basin（Emerald Pool翡翠绿，约20分钟）。傍晚出园回西黄石。今晚是IHG住3送1的免费第4晚，好好享受！"
+                    ],
+                    spots: [
+                        { label: "拉玛山谷黑熊", url: "https://www.xiaohongshu.com/search_result?keyword=Lamar+Valley+黑熊+黄石" },
+                        { label: "Firehole Lake Drive", url: "https://www.xiaohongshu.com/search_result?keyword=Firehole+Lake+Drive+黄石" },
+                        { label: "Great Fountain Geyser", url: "https://www.xiaohongshu.com/search_result?keyword=Great+Fountain+Geyser+黄石" },
+                        { label: "Black Sand Basin", url: "https://www.xiaohongshu.com/search_result?keyword=Black+Sand+Basin+Emerald+Pool" },
+                        { label: "Firehole Canyon", url: "https://www.xiaohongshu.com/search_result?keyword=Firehole+Canyon+Drive+黄石" }
+                    ],
+                    hotel: {
+                        name:    "Holiday Inn West Yellowstone（免费第4晚 🎉）",
+                        url:     "https://www.ihg.com/holidayinn/hotels/us/en/west-yellowstone/ylsmt/hoteldetail",
+                        address: "315 Yellowstone Ave, West Yellowstone, MT 59758"
+                    }
+                },
+                {
+                    title:     "Day 6 · 5月18日 · 西黄石 → SLC → 飞回",
+                    driveTime: "🚗 ~4.5h",
+                    highlights: [
+                        "08:00在酒店吃完早餐，08:30退房。走US-20 E转I-15 S，约4.5小时回SLC。",
+                        "中途Idaho Falls停一次（可在Snake River瀑布边散步15分钟顺便吃午饭），约13:00-14:00抵达SLC。",
+                        "还车前加满油（机场附近Chevron或Shell），拍车身对比取车记录，还车流程约30分钟。",
+                        "提前2小时到机场安检（SLC安检通常20-30分钟）。候机时可在Squatters Pub喝最后一杯本地精酿。"
+                    ],
+                    spots: [
+                        { label: "Idaho Falls瀑布", url: "https://www.xiaohongshu.com/search_result?keyword=Idaho+Falls+瀑布" },
+                        { label: "Squatters Pub精酿", url: "https://www.xiaohongshu.com/search_result?keyword=Squatters+Pub+盐湖城" }
+                    ],
+                    hotel: {
+                        name:    "✈️ 飞回 — 无需住宿",
+                        url:     "",
+                        address: "SLC机场 · 还车 → 安检 → 候机"
+                    }
+                }
+            ]
+        };
+
+        /* ─── App state ──────────────────────────────────────────────────── */
+        let currentData       = null;
+        let isEditing         = false;
+        let hotelMarkers      = [];
+        let spotMarkers       = [];
+        let hotelMarkersAdded = false;
+
+        /* ─── Map ────────────────────────────────────────────────────────── */
+        const map = L.map('map', { tap: false }).setView([43.5, -111.0], 6);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18 }).addTo(map);
+
+        // Route polyline — follows the driving path geographically
+        const routeLocations = [
+            { name: "盐湖城机场",       lat: 40.7884, lon: -111.9779 },
+            { name: "Logan, UT",         lat: 41.7370, lon: -111.8338 },
+            { name: "Afton, WY",         lat: 42.7252, lon: -110.9326 },
+            { name: "杰克逊",            lat: 43.4799, lon: -110.7624 },
+            { name: "Oxbow Bend",        lat: 43.8584, lon: -110.5572 },
+            { name: "黄石南门",          lat: 44.1345, lon: -110.6655 },
+            { name: "West Thumb",        lat: 44.4152, lon: -110.5753 },
+            { name: "大棱镜温泉",        lat: 44.5305, lon: -110.8394 },
+            { name: "老忠实",            lat: 44.4605, lon: -110.8281 },
+            { name: "西黄石",            lat: 44.6597, lon: -111.0999 },
+            { name: "Norris盆地",        lat: 44.7260, lon: -110.7030 },
+            { name: "猛犸热泉",          lat: 44.9766, lon: -110.6975 },
+            { name: "Tower Junction",    lat: 44.9116, lon: -110.3983 },
+            { name: "拉玛山谷",          lat: 44.9281, lon: -110.2371 },
+            { name: "黄石大峡谷",        lat: 44.7344, lon: -110.4978 },
+            { name: "Hayden Valley",     lat: 44.6574, lon: -110.4854 },
+            { name: "西黄石(返)",        lat: 44.6597, lon: -111.0999 },
+            { name: "Idaho Falls",       lat: 43.4917, lon: -112.0408 },
+            { name: "盐湖城机场(返)",    lat: 40.7884, lon: -111.9779 }
+        ];
+        const latlngs = routeLocations.map(l => [l.lat, l.lon]);
+
+        routeLocations.forEach(l => {
+            L.circleMarker([l.lat, l.lon], {
+                radius: 5, color: '#1b5e20', weight: 1.5,
+                fillColor: '#4caf50', fillOpacity: 0.75
+            }).addTo(map).bindPopup(l.name);
+        });
+        L.polyline(latlngs, { color: '#2e7d32', weight: 4, dashArray: '8, 8' }).addTo(map);
+        setTimeout(() => map.fitBounds(latlngs, { padding: [25, 25] }), 300);
+
+        // Route lookup table for car animation
+        const routeTable = (() => {
+            const tbl = [{ pt: latlngs[0], cum: 0 }];
+            let cum = 0;
+            for (let i = 1; i < latlngs.length; i++) {
+                cum += Math.hypot(latlngs[i][0]-latlngs[i-1][0], latlngs[i][1]-latlngs[i-1][1]);
+                tbl.push({ pt: latlngs[i], cum });
+            }
+            return tbl;
+        })();
+        const totalRouteLen = routeTable[routeTable.length - 1].cum;
+
+        function getPointAtDist(d) {
+            d = Math.max(0, Math.min(d, totalRouteLen));
+            for (let i = 0; i < routeTable.length - 1; i++) {
+                if (routeTable[i+1].cum >= d) {
+                    const t  = (d - routeTable[i].cum) / (routeTable[i+1].cum - routeTable[i].cum || 1);
+                    const p1 = routeTable[i].pt, p2 = routeTable[i+1].pt;
+                    return [p1[0] + t*(p2[0]-p1[0]), p1[1] + t*(p2[1]-p1[1])];
+                }
+            }
+            return routeTable[routeTable.length - 1].pt;
+        }
+
+        function snapToRoute(point) {
+            let best = 0, bestD = Infinity;
+            for (let i = 0; i < routeTable.length - 1; i++) {
+                const p1 = routeTable[i].pt, p2 = routeTable[i+1].pt;
+                const dx = p2[0]-p1[0], dy = p2[1]-p1[1];
+                const len2 = dx*dx + dy*dy;
+                const t = len2 > 0 ? Math.max(0, Math.min(1,
+                    ((point[0]-p1[0])*dx + (point[1]-p1[1])*dy) / len2)) : 0;
+                const d = Math.hypot(point[0]-(p1[0]+t*dx), point[1]-(p1[1]+t*dy));
+                if (d < bestD) {
+                    bestD = d;
+                    best  = routeTable[i].cum + t*(routeTable[i+1].cum - routeTable[i].cum);
+                }
+            }
+            return best;
+        }
+
+        // Hotel fallback coords: one per day (Day 0 → Day 6)
+        const hotelFallbacks = [
+            [43.4799, -110.7624],  // Day 0: Jackson
+            [43.4799, -110.7624],  // Day 1: Jackson
+            [44.6597, -111.0999],  // Day 2: West Yellowstone
+            [44.6597, -111.0999],  // Day 3: West Yellowstone
+            [44.6574, -110.4854],  // Day 4: near Canyon (Hayden Valley area for animation variety)
+            [44.9281, -110.2371],  // Day 5: Lamar Valley area (for animation variety)
+            [40.7884, -111.9779],  // Day 6: SLC
+        ];
+
+        const greenIcon = L.icon({
+            iconUrl:     'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-green.png',
+            shadowUrl:   'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
+            iconSize:    [25, 41], iconAnchor:   [12, 41],
+            popupAnchor: [1, -34], shadowSize:   [41, 41]
+        });
+
+        async function geocode(address) {
+            try {
+                const res  = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(address)}`);
+                const data = await res.json();
+                if (data.length > 0) return [parseFloat(data[0].lat), parseFloat(data[0].lon)];
+            } catch (e) { /* silent */ }
+            return null;
+        }
+
+        async function addHotelMarkers(days) {
+            hotelMarkers.forEach(m => map.removeLayer(m));
+            hotelMarkers = [];
+            days.forEach((day, i) => {
+                if (!day.hotel || !hotelFallbacks[i]) return;
+                const label = day.hotel.name || '';
+                if (label.includes('无需住宿') || label.includes('✈️')) return;
+                const m = L.marker(hotelFallbacks[i], { icon: greenIcon })
+                    .addTo(map)
+                    .bindPopup(`🏨 Day ${i}: ${esc(label)}`);
+                hotelMarkers.push(m);
+            });
+
+            // Background geocoding pass
+            for (let i = 0; i < days.length; i++) {
+                const addr = days[i]?.hotel?.address;
+                const name = days[i]?.hotel?.name || '';
+                if (!addr || name.includes('✈️') || !hotelMarkers[i]) continue;
+                const coords = await geocode(addr);
+                if (coords && hotelMarkers[i]) hotelMarkers[i].setLatLng(coords);
+                await sleep(1200);
+            }
+        }
+
+        async function addSpotMarkers(days) {
+            spotMarkers.forEach(m => map.removeLayer(m));
+            spotMarkers = [];
+            for (let i = 0; i < days.length; i++) {
+                const spots = toArr(days[i].spots);
+                for (const spot of spots) {
+                    if (!spot.address) continue;
+                    const coords = await geocode(spot.address);
+                    if (coords) {
+                        const m = L.circleMarker(coords, {
+                            radius: 8, color: '#1b5e20', weight: 2,
+                            fillColor: '#66bb6a', fillOpacity: 0.85
+                        }).addTo(map).bindPopup(`📍 Day ${i}: ${esc(spot.label)}`);
+                        spotMarkers.push(m);
+                    }
+                    await sleep(1200);
+                }
+            }
+        }
+
+        /* ─── Car marker & animation ─────────────────────────────────────── */
+        const carIcon = L.divIcon({
+            html: '<span class="car-emoji">🚙</span>',
+            className: 'car-div-icon',
+            iconSize: [36, 36],
+            iconAnchor: [18, 18]
+        });
+        let carPos       = [40.7884, -111.9779];
+        const carMarker  = L.marker(carPos, { icon: carIcon, zIndexOffset: 2000 }).addTo(map);
+        carMarker.bindPopup('');
+        let carAnimFrame  = null;
+        let carAngle      = 0;
+        let carRouteDist  = snapToRoute(carPos);
+
+        function calcBearing(from, to) {
+            const r = d => d * Math.PI / 180;
+            const dLon = r(to[1] - from[1]);
+            const y = Math.sin(dLon) * Math.cos(r(to[0]));
+            const x = Math.cos(r(from[0])) * Math.sin(r(to[0])) - Math.sin(r(from[0])) * Math.cos(r(to[0])) * Math.cos(dLon);
+            return Math.atan2(y, x) * 180 / Math.PI;
+        }
+
+        function bearingAtDist(d) {
+            const eps = totalRouteLen * 0.004;
+            return calcBearing(
+                getPointAtDist(Math.max(0, d - eps)),
+                getPointAtDist(Math.min(totalRouteLen, d + eps))
+            );
+        }
+
+        function animateCar(targetCoords, dayIndex) {
+            if (carAnimFrame) cancelAnimationFrame(carAnimFrame);
+
+            const fromDist  = carRouteDist;
+            const toDist    = snapToRoute(targetCoords);
+            const distDelta = Math.abs(toDist - fromDist);
+            const duration  = Math.min(3000, Math.max(800, distDelta * 400 + 600));
+
+            const emojiEl = carMarker.getElement()?.querySelector('.car-emoji');
+            if (emojiEl) emojiEl.style.transition = 'none';
+
+            map.flyTo(targetCoords, 8, { duration: duration / 1000 });
+
+            const startTime = performance.now();
+            function frame(now) {
+                const t    = Math.min((now - startTime) / duration, 1);
+                const ease = t < 0.5 ? 2*t*t : -1 + (4 - 2*t)*t;
+                const d    = fromDist + (toDist - fromDist) * ease;
+                const pos  = getPointAtDist(d);
+
+                carMarker.setLatLng(pos);
+                carAngle = bearingAtDist(d) + 90;
+                const el = carMarker.getElement()?.querySelector('.car-emoji');
+                if (el) el.style.transform = `rotate(${carAngle}deg)`;
+
+                if (t < 1) {
+                    carAnimFrame = requestAnimationFrame(frame);
+                } else {
+                    carRouteDist = toDist;
+                    carPos = [...pos];
+                    if (el) {
+                        el.style.transition = '';
+                        el.style.transform = `rotate(${carAngle}deg) scale(1.4)`;
+                        setTimeout(() => { if (el) el.style.transform = `rotate(${carAngle}deg) scale(1)`; }, 280);
+                    }
+                    const days = toArr(currentData?.days || []);
+                    const day  = days[dayIndex];
+                    if (day?.hotel?.name) {
+                        carMarker.getPopup().setContent(`🏨 Day ${dayIndex}: ${day.hotel.name}`);
+                        carMarker.openPopup();
+                    }
+                }
+            }
+            carAnimFrame = requestAnimationFrame(frame);
+        }
+
+        document.getElementById('itinerary-content').addEventListener('click', e => {
+            if (isEditing) return;
+            if (e.target.closest('a')) return;
+            const card = e.target.closest('.day-card[data-day]');
+            if (!card) return;
+            const i = parseInt(card.dataset.day);
+            const coords = hotelFallbacks[i];
+            if (!coords) return;
+            document.querySelectorAll('.day-card').forEach(c => c.classList.remove('active-day'));
+            card.classList.add('active-day');
+            animateCar(coords, i);
+        });
+
+        /* ─── Helpers ────────────────────────────────────────────────────── */
+        const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+        function esc(str) {
+            return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+        }
+
+        function toArr(val) {
+            if (!val) return [];
+            if (Array.isArray(val)) return val;
+            return Object.values(val);
+        }
+
+        function toHighlights(val) {
+            if (!val) return [''];
+            if (typeof val === 'string') return [val];
+            return toArr(val).filter(s => s !== undefined);
+        }
+
+        function setStatus(state, text) {
+            const dot = document.getElementById('status-dot');
+            dot.className = 'status-dot' + (state === 'ok' ? '' : ' ' + state);
+            document.getElementById('status-text').textContent = text;
+        }
+
+        function toast(msg, type = '') {
+            const el = document.getElementById('toaster');
+            el.textContent = msg;
+            el.className = 'show ' + type;
+            clearTimeout(el._timer);
+            el._timer = setTimeout(() => { el.className = ''; }, 2800);
+        }
+
+        /* ─── Render: view mode ──────────────────────────────────────────── */
+        function renderView(data) {
+            document.getElementById('itinerary-scroll').classList.remove('editing');
+            document.getElementById('btn-edit').hidden   = false;
+            document.getElementById('btn-save').hidden   = true;
+            document.getElementById('btn-cancel').hidden = true;
+
+            const meta = data.meta || {};
+            const days = toArr(data.days);
+
+            let html = `<h1>${esc(meta.title)}</h1><p class="intro">${esc(meta.intro)}</p>`;
+
+            days.forEach((day, i) => {
+                const spots = toArr(day.spots);
+                html += `<div class="day-card" data-day="${i}">`;
+                html += `<div class="day-title">${esc(day.title)}<span class="drive-time">${esc(day.driveTime)}</span></div>`;
+                toHighlights(day.highlights).forEach(h => {
+                    if (h) html += `<div class="highlight-block">${esc(h)}</div>`;
+                });
+
+                if (spots.length) {
+                    html += `<div class="spot-tags">`;
+                    spots.forEach(s => {
+                        html += `<a href="${esc(s.url)}" target="_blank" class="spot-tag">${esc(s.label)}</a>`;
+                    });
+                    html += `</div>`;
+                }
+
+                if (day.hotel) {
+                    const isLastDay = day.hotel.name?.includes('✈️') || day.hotel.name?.includes('无需住宿');
+                    html += `
+                    <div class="hotel-info">
+                        <div class="hotel-icon">${isLastDay ? '✈️' : '🏨'}</div>
+                        <div class="hotel-details">
+                            <div class="hotel-name">
+                                ${day.hotel.url ? `<a href="${esc(day.hotel.url)}" target="_blank">${esc(day.hotel.name)}</a>` : esc(day.hotel.name)}
+                            </div>
+                            <div class="hotel-address">${esc(day.hotel.address)}</div>
+                        </div>
+                    </div>`;
+                }
+                html += `</div>`;
+            });
+
+            document.getElementById('itinerary-content').innerHTML = html;
+        }
+
+        /* ─── Render: edit mode ──────────────────────────────────────────── */
+        function renderEdit(data) {
+            document.getElementById('itinerary-scroll').classList.add('editing');
+            document.getElementById('btn-edit').hidden   = true;
+            document.getElementById('btn-save').hidden   = false;
+            document.getElementById('btn-cancel').hidden = false;
+
+            const meta = data.meta || {};
+            const days = toArr(data.days);
+
+            let html = `
+            <div class="edit-banner">
+                ✏️ <strong>编辑模式已开启</strong> — 修改完成后点击「保存」，数据存储在本地浏览器。
+            </div>
+            <div class="edit-section">
+                <label class="edit-label">页面标题</label>
+                <input class="edit-field" id="meta-title" value="${esc(meta.title)}">
+            </div>
+            <div class="edit-section">
+                <label class="edit-label">页面简介</label>
+                <textarea class="edit-field edit-textarea" id="meta-intro">${esc(meta.intro)}</textarea>
+            </div>`;
+
+            days.forEach((day, i) => {
+                const spots = toArr(day.spots);
+                html += `<div class="day-card editing" data-day="${i}">`;
+
+                html += `
+                <div class="day-title-row">
+                    <div class="main-title">
+                        <label class="edit-label">Day 标题</label>
+                        <input class="edit-field day-title-input" value="${esc(day.title)}">
+                    </div>
+                    <div class="drive-col">
+                        <label class="edit-label">驾车时间</label>
+                        <input class="edit-field drive-time-input" value="${esc(day.driveTime)}">
+                    </div>
+                </div>`;
+
+                html += `
+                <div class="edit-row">
+                    <label class="edit-label">行程描述</label>
+                    <div class="highlights-editor" id="hl-${i}">`;
+                toHighlights(day.highlights).forEach(h => {
+                    html += highlightItem(h);
+                });
+                html += `
+                        <button class="add-tag-btn" onclick="addHighlight('hl-${i}')">+ 添加描述</button>
+                    </div>
+                </div>`;
+
+                html += `
+                <div class="edit-row">
+                    <label class="edit-label">景点标签</label>
+                    <div class="spots-editor" id="spots-${i}">`;
+                spots.forEach(s => {
+                    html += spotEditorItem(s.label, s.url, s.address || '');
+                });
+                html += `
+                        <button class="add-tag-btn" onclick="addSpot('spots-${i}')">+ 添加景点</button>
+                    </div>
+                </div>`;
+
+                html += `
+                <div class="hotel-edit-block">
+                    <div class="hotel-edit-header">🏨 住宿信息</div>
+                    <div class="edit-row">
+                        <label class="edit-label">酒店名称</label>
+                        <input class="edit-field hotel-name-input" value="${esc(day.hotel?.name || '')}">
+                    </div>
+                    <div class="edit-row">
+                        <label class="edit-label">酒店网址</label>
+                        <input class="edit-field hotel-url-input" value="${esc(day.hotel?.url || '')}">
+                    </div>
+                    <div class="edit-row" style="margin-bottom:0">
+                        <label class="edit-label">酒店地址</label>
+                        <input class="edit-field hotel-address-input" value="${esc(day.hotel?.address || '')}">
+                    </div>
+                </div>`;
+
+                html += `</div>`;
+            });
+
+            document.getElementById('itinerary-content').innerHTML = html;
+        }
+
+        function highlightItem(text) {
+            return `
+            <div class="highlight-item">
+                <textarea class="edit-field edit-textarea highlight-text-input">${esc(text)}</textarea>
+                <button class="tag-delete-btn" title="删除此段描述" onclick="this.closest('.highlight-item').remove()">✕</button>
+            </div>`;
+        }
+
+        function spotEditorItem(label, url, address = '') {
+            return `
+            <div class="spot-editor-item">
+                <div class="spot-editor-top">
+                    <input class="edit-field spot-label-input" placeholder="景点名称" value="${esc(label)}">
+                    <button class="tag-delete-btn" title="删除景点" onclick="this.closest('.spot-editor-item').remove()">✕</button>
+                </div>
+                <input class="edit-field spot-url-input" placeholder="链接 URL（点标签跳转）" value="${esc(url)}">
+                <input class="edit-field spot-address-input" placeholder="地点地址（可选，填写后将在地图打标记）" value="${esc(address)}">
+            </div>`;
+        }
+
+        /* ─── Global helpers for inline onclick ──────────────────────────── */
+        window.addHighlight = function(containerId) {
+            const container = document.getElementById(containerId);
+            const addBtn    = container.querySelector('.add-tag-btn');
+            const div       = document.createElement('div');
+            div.innerHTML   = highlightItem('');
+            const item      = div.firstElementChild;
+            container.insertBefore(item, addBtn);
+            item.querySelector('textarea').focus();
+        };
+
+        window.addSpot = function(containerId) {
+            const container = document.getElementById(containerId);
+            const addBtn    = container.querySelector('.add-tag-btn');
+            const div       = document.createElement('div');
+            div.innerHTML   = spotEditorItem('', '', '');
+            const item      = div.firstElementChild;
+            container.insertBefore(item, addBtn);
+            item.querySelector('.spot-label-input').focus();
+        };
+
+        /* ─── Collect form data ──────────────────────────────────────────── */
+        function collectData() {
+            const days = [];
+            document.querySelectorAll('.day-card.editing').forEach(card => {
+                const spots = [];
+                card.querySelectorAll('.spot-editor-item').forEach(item => {
+                    const label   = item.querySelector('.spot-label-input').value.trim();
+                    const url     = item.querySelector('.spot-url-input').value.trim();
+                    const address = item.querySelector('.spot-address-input').value.trim();
+                    if (label) spots.push({ label, url, address });
+                });
+                const highlights = [];
+                card.querySelectorAll('.highlight-text-input').forEach(ta => {
+                    const v = ta.value.trim();
+                    if (v) highlights.push(v);
+                });
+                days.push({
+                    title:     card.querySelector('.day-title-input').value.trim(),
+                    driveTime: card.querySelector('.drive-time-input').value.trim(),
+                    highlights,
+                    spots,
+                    hotel: {
+                        name:    card.querySelector('.hotel-name-input').value.trim(),
+                        url:     card.querySelector('.hotel-url-input').value.trim(),
+                        address: card.querySelector('.hotel-address-input').value.trim()
+                    }
+                });
+            });
+            return {
+                meta: {
+                    title: document.getElementById('meta-title').value.trim(),
+                    intro: document.getElementById('meta-intro').value.trim()
+                },
+                days
+            };
+        }
+
+        /* ─── Button handlers ────────────────────────────────────────────── */
+        document.getElementById('btn-edit').addEventListener('click', () => {
+            isEditing = true;
+            renderEdit(currentData);
+        });
+
+        document.getElementById('btn-cancel').addEventListener('click', () => {
+            isEditing = false;
+            renderView(currentData);
+        });
+
+        document.getElementById('btn-save').addEventListener('click', () => {
+            const btn = document.getElementById('btn-save');
+            btn.disabled = true;
+            btn.textContent = '⏳ 保存中...';
+            try {
+                const newData = collectData();
+                saveLocalData(newData);
+                currentData = newData;
+                isEditing   = false;
+                renderView(currentData);
+                hotelMarkersAdded = false;
+                addHotelMarkers(toArr(currentData.days))
+                    .then(() => addSpotMarkers(toArr(currentData.days)));
+                hotelMarkersAdded = true;
+                toast('保存成功！数据已存储在本地。', 'success');
+                setStatus('ok', '本地存储');
+            } catch(err) {
+                console.error(err);
+                toast('保存失败。', 'error');
+                setStatus('error', '保存失败');
+            } finally {
+                btn.disabled    = false;
+                btn.textContent = '💾 保存';
+            }
+        });
+
+        /* ─── Init ───────────────────────────────────────────────────────── */
+        (function init() {
+            setStatus('syncing', '加载中...');
+            const stored = loadData();
+            currentData = stored || DEFAULT_DATA;
+            if (!stored) saveLocalData(DEFAULT_DATA);
+
+            document.getElementById('loading-overlay').style.display = 'none';
+            renderView(currentData);
+            setStatus('ok', '本地存储');
+
+            addHotelMarkers(toArr(currentData.days))
+                .then(() => addSpotMarkers(toArr(currentData.days)));
+            hotelMarkersAdded = true;
+        })();
+    </script>
+</body>
+</html>
