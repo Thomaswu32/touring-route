@@ -265,20 +265,23 @@
     <div id="toaster"></div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script>
-        /* ─── LocalStorage persistence ───────────────────────────────────── */
-        const STORAGE_KEY = 'yellowstoneroute_v1';
+    <script type="module">
+        import { initializeApp }                      from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+        import { getDatabase, ref, set, onValue }     from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 
-        function loadData() {
-            try {
-                const raw = localStorage.getItem(STORAGE_KEY);
-                return raw ? JSON.parse(raw) : null;
-            } catch(e) { return null; }
-        }
-
-        function saveLocalData(data) {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-        }
+        /* ─── Firebase init ──────────────────────────────────────────────── */
+        const firebaseConfig = {
+            apiKey:            "AIzaSyACdJyUXjs-h0XPEuJYtMg1_txxJjVnqHI",
+            authDomain:        "newmexicoroute.firebaseapp.com",
+            databaseURL:       "https://newmexicoroute-default-rtdb.firebaseio.com",
+            projectId:         "newmexicoroute",
+            storageBucket:     "newmexicoroute.firebasestorage.app",
+            messagingSenderId: "840850472144",
+            appId:             "1:840850472144:web:09481ca530880ac2d6b2d5",
+        };
+        const fbApp   = initializeApp(firebaseConfig);
+        const db      = getDatabase(fbApp);
+        const dataRef = ref(db, 'yellowstone');
 
         /* ─── Default / seed data ────────────────────────────────────────── */
         const DEFAULT_DATA = {
@@ -944,13 +947,14 @@
             renderView(currentData);
         });
 
-        document.getElementById('btn-save').addEventListener('click', () => {
+        document.getElementById('btn-save').addEventListener('click', async () => {
             const btn = document.getElementById('btn-save');
             btn.disabled = true;
             btn.textContent = '⏳ 保存中...';
+            setStatus('syncing', '同步中...');
             try {
                 const newData = collectData();
-                saveLocalData(newData);
+                await set(dataRef, newData);
                 currentData = newData;
                 isEditing   = false;
                 renderView(currentData);
@@ -958,33 +962,63 @@
                 addHotelMarkers(toArr(currentData.days))
                     .then(() => addSpotMarkers(toArr(currentData.days)));
                 hotelMarkersAdded = true;
-                toast('保存成功！数据已存储在本地。', 'success');
-                setStatus('ok', '本地存储');
+                toast('保存成功！所有人将看到最新内容。', 'success');
+                setStatus('ok', '已同步');
             } catch(err) {
                 console.error(err);
-                toast('保存失败。', 'error');
-                setStatus('error', '保存失败');
+                toast('保存失败，请检查网络或数据库权限。', 'error');
+                setStatus('error', '同步失败');
             } finally {
                 btn.disabled    = false;
                 btn.textContent = '💾 保存';
             }
         });
 
-        /* ─── Init ───────────────────────────────────────────────────────── */
-        (function init() {
-            setStatus('syncing', '加载中...');
-            const stored = loadData();
-            currentData = stored || DEFAULT_DATA;
-            if (!stored) saveLocalData(DEFAULT_DATA);
+        /* ─── Firebase real-time listener ────────────────────────────────── */
+        setStatus('syncing', '连接中...');
 
+        onValue(dataRef, (snapshot) => {
             document.getElementById('loading-overlay').style.display = 'none';
-            renderView(currentData);
-            setStatus('ok', '本地存储');
 
-            addHotelMarkers(toArr(currentData.days))
-                .then(() => addSpotMarkers(toArr(currentData.days)));
-            hotelMarkersAdded = true;
-        })();
+            if (snapshot.exists()) {
+                const remoteData = snapshot.val();
+                if (!isEditing) {
+                    currentData = remoteData;
+                    renderView(currentData);
+                    if (!hotelMarkersAdded) {
+                        addHotelMarkers(toArr(currentData.days))
+                            .then(() => addSpotMarkers(toArr(currentData.days)));
+                        hotelMarkersAdded = true;
+                    }
+                }
+                setStatus('ok', '已同步');
+            } else {
+                set(dataRef, DEFAULT_DATA).then(() => {
+                    currentData = DEFAULT_DATA;
+                    renderView(currentData);
+                    addHotelMarkers(toArr(currentData.days))
+                        .then(() => addSpotMarkers(toArr(currentData.days)));
+                    hotelMarkersAdded = true;
+                    setStatus('ok', '已同步');
+                    toast('已初始化默认数据。', 'success');
+                }).catch(err => {
+                    console.error('Seed error:', err);
+                    currentData = DEFAULT_DATA;
+                    renderView(currentData);
+                    setStatus('error', '初始化失败');
+                    toast('数据库写入失败，请检查 Firebase 规则。', 'error');
+                });
+            }
+        }, (error) => {
+            console.error('Firebase error:', error);
+            document.getElementById('loading-overlay').style.display = 'none';
+            setStatus('error', '连接失败');
+            if (!currentData) {
+                currentData = DEFAULT_DATA;
+                renderView(currentData);
+                toast('无法连接数据库，显示本地默认数据。', 'error');
+            }
+        });
     </script>
 </body>
 </html>
