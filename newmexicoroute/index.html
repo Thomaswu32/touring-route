@@ -1,0 +1,974 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>newmexicoroute - 西南大满贯</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        /* ── Base ── */
+        :root { --primary: #c0392b; --bg: #e9ecef; --text: #333; }
+        *, *::before, *::after { box-sizing: border-box; }
+        body, html {
+            margin: 0; padding: 0; height: 100%;
+            font-family: 'Segoe UI', sans-serif;
+            background-color: var(--bg); color: var(--text);
+            display: flex; justify-content: center; align-items: center;
+            overflow: hidden;
+        }
+
+        /* ── Layout ── */
+        #main-wrapper {
+            width: 90vw; height: 85vh; min-width: 800px;
+            display: flex;
+            background: #fff; border-radius: 16px;
+            box-shadow: 0 15px 50px rgba(0,0,0,0.2);
+            overflow: hidden; position: relative;
+        }
+        #map-container { width: 50%; height: 100%; border-right: 2px solid #eee; position: relative; z-index: 1; }
+        #map { width: 100%; height: 100%; }
+
+        /* Itinerary panel = flex column */
+        #itinerary-container {
+            width: 50%; height: 100%;
+            display: flex; flex-direction: column;
+            background: #faf9f6;
+            position: relative; z-index: 10;
+        }
+
+        /* ── Edit bar ── */
+        #edit-bar {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 9px 16px;
+            background: #fff;
+            border-bottom: 1px solid #e8e8e8;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+            flex-shrink: 0;
+        }
+        #sync-status { display: flex; align-items: center; gap: 7px; font-size: 12px; color: #888; }
+        .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #27ae60; flex-shrink: 0; }
+        .status-dot.syncing { background: #f39c12; animation: pulse 1s ease-in-out infinite; }
+        .status-dot.error   { background: #e74c3c; }
+        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+        #edit-controls { display: flex; gap: 8px; }
+        .btn {
+            padding: 7px 15px; border: none; border-radius: 8px;
+            font-size: 13px; font-weight: 600; cursor: pointer;
+            transition: background .18s, opacity .18s;
+        }
+        .btn:disabled { opacity: .55; cursor: not-allowed; }
+        #btn-edit   { background: #ecf0f1; color: #2c3e50; }
+        #btn-edit:hover:not(:disabled)   { background: #d5dbde; }
+        #btn-save   { background: var(--primary); color: #fff; }
+        #btn-save:hover:not(:disabled)   { background: #a93226; }
+        #btn-cancel { background: #ecf0f1; color: #7f8c8d; }
+        #btn-cancel:hover:not(:disabled) { background: #d5dbde; }
+
+        /* ── Scroll area ── */
+        #itinerary-scroll {
+            flex: 1; overflow-y: scroll;
+            padding: 20px 28px 36px;
+            -webkit-overflow-scrolling: touch;
+            position: relative;
+        }
+        #itinerary-scroll.editing { background: #fffef5; }
+
+        /* ── Loading overlay ── */
+        #loading-overlay {
+            position: absolute; inset: 0;
+            background: rgba(250,249,246,.92);
+            display: flex; flex-direction: column;
+            align-items: center; justify-content: center;
+            gap: 12px; z-index: 50;
+        }
+        .spinner {
+            width: 34px; height: 34px;
+            border: 3px solid #ddd; border-top-color: var(--primary);
+            border-radius: 50%; animation: spin .75s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .loading-text { font-size: 13px; color: #999; }
+
+        /* ── View mode typography ── */
+        h1 { color: var(--primary); font-size: 22px; margin: 0 0 10px; border-bottom: 3px solid var(--primary); padding-bottom: 5px; display: inline-block; }
+        .intro { font-size: 13px; color: #666; margin-bottom: 20px; line-height: 1.55; }
+        .day-card {
+            background: #fff;
+            border-left: 4px solid var(--primary);
+            border-radius: 0 8px 8px 0;
+            padding: 15px; margin-bottom: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,.05);
+        }
+        .day-title { font-size: 16px; font-weight: bold; color: #2c3e50; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+        .drive-time { font-size: 11px; color: #fff; background: var(--primary); padding: 3px 8px; border-radius: 12px; white-space: nowrap; flex-shrink: 0; }
+        .highlights { font-size: 13px; line-height: 1.6; color: #555; }
+        .highlight-block { font-size: 13px; line-height: 1.6; color: #555; margin-bottom: 4px; }
+        .highlight-block:last-child { margin-bottom: 0; }
+
+        /* Highlights editor */
+        .highlights-editor { display: flex; flex-direction: column; gap: 6px; }
+        .highlight-item {
+            display: flex; gap: 7px; align-items: flex-start;
+        }
+        .highlight-item textarea {
+            flex: 1; resize: vertical; min-height: 52px;
+        }
+        .highlight-item .tag-delete-btn { margin-top: 2px; flex-shrink: 0; }
+        .spot-tags { margin-top: 12px; display: flex; flex-wrap: wrap; gap: 10px; }
+        .spot-tag {
+            display: inline-block; background: #ecf0f1; color: #34495e;
+            padding: 8px 15px; border-radius: 6px;
+            font-size: 12px; font-weight: 600; text-decoration: none;
+            cursor: pointer; position: relative; z-index: 20; touch-action: manipulation;
+        }
+        .spot-tag:hover { background: var(--primary); color: #fff; }
+        .hotel-info {
+            display: flex; align-items: flex-start; gap: 12px;
+            margin-top: 12px; padding: 12px;
+            background: #fff9f7; border-left: 3px solid var(--primary); border-radius: 4px;
+        }
+        .hotel-icon {
+            width: 36px; height: 36px; background: var(--primary);
+            border-radius: 50%; display: flex; align-items: center;
+            justify-content: center; color: #fff; font-size: 18px; flex-shrink: 0;
+        }
+        .hotel-details { flex: 1; min-width: 0; }
+        .hotel-name { font-size: 13px; font-weight: bold; color: #2c3e50; margin-bottom: 3px; }
+        .hotel-name a { color: var(--primary); text-decoration: none; }
+        .hotel-name a:hover { text-decoration: underline; }
+        .hotel-address { font-size: 11px; color: #7f8c8d; line-height: 1.4; }
+
+        /* ── Edit mode styles ── */
+        .edit-banner {
+            background: #fffbcc; border: 1px solid #e0c000;
+            border-radius: 8px; padding: 9px 14px; margin-bottom: 16px;
+            font-size: 12px; color: #7a6000;
+        }
+        .edit-section { margin-bottom: 14px; }
+        .edit-label {
+            display: block; font-size: 10px; font-weight: 700;
+            color: #aaa; text-transform: uppercase; letter-spacing: .6px;
+            margin-bottom: 4px;
+        }
+        .edit-field {
+            width: 100%;
+            border: 1.5px solid #dcc700;
+            border-radius: 6px; padding: 7px 10px;
+            font-family: inherit; font-size: 13px; color: #333;
+            background: #fff; outline: none;
+            transition: border-color .2s, box-shadow .2s;
+        }
+        .edit-field:focus {
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(192,57,43,.12);
+        }
+        .edit-textarea { resize: vertical; min-height: 62px; }
+        .day-card.editing { border-left-color: #d4ac00; }
+
+        .edit-row { margin-bottom: 10px; }
+        .day-title-row { display: flex; gap: 10px; margin-bottom: 10px; }
+        .day-title-row .main-title { flex: 1; }
+        .day-title-row .drive-col  { width: 135px; flex-shrink: 0; }
+
+        /* Spot editor */
+        .spots-editor { display: flex; flex-direction: column; gap: 7px; }
+        .spot-editor-item {
+            display: flex; flex-direction: column; gap: 5px;
+            background: #f0f7ff; border: 1px dashed #7aaddf;
+            border-radius: 6px; padding: 8px;
+        }
+        .spot-editor-top { display: flex; gap: 7px; align-items: center; }
+        .spot-editor-top .edit-field { flex: 1; margin: 0; }
+        .spot-editor-item > .edit-field { margin: 0; }
+        .tag-delete-btn {
+            background: #e74c3c; color: #fff; border: none;
+            border-radius: 50%; width: 24px; height: 24px;
+            cursor: pointer; font-size: 13px; flex-shrink: 0;
+            display: flex; align-items: center; justify-content: center;
+            line-height: 1;
+        }
+        .tag-delete-btn:hover { background: #c0392b; }
+        .add-tag-btn {
+            display: inline-flex; align-items: center; gap: 4px;
+            background: #27ae60; color: #fff; border: none;
+            border-radius: 6px; padding: 7px 12px;
+            font-size: 12px; font-weight: 600; cursor: pointer;
+            align-self: flex-start; margin-top: 3px;
+        }
+        .add-tag-btn:hover { background: #219a52; }
+
+        /* Hotel edit block */
+        .hotel-edit-block {
+            margin-top: 12px; padding: 12px;
+            background: #fff9f7; border-left: 3px solid var(--primary); border-radius: 4px;
+        }
+        .hotel-edit-header { font-size: 13px; font-weight: bold; color: #2c3e50; margin-bottom: 10px; }
+
+        /* ── Toast ── */
+        #toaster {
+            position: fixed; bottom: 24px; left: 50%;
+            transform: translateX(-50%) translateY(12px);
+            background: #2c3e50; color: #fff;
+            padding: 10px 20px; border-radius: 8px;
+            font-size: 13px; opacity: 0;
+            transition: opacity .25s, transform .25s;
+            pointer-events: none; z-index: 9999;
+        }
+        #toaster.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+        #toaster.success { background: #27ae60; }
+        #toaster.error   { background: #e74c3c; }
+
+        /* ── Car animation ── */
+        .car-div-icon { background: none !important; border: none !important; }
+        .car-emoji {
+            font-size: 28px; display: block; line-height: 1;
+            transition: transform 0.25s ease;
+            filter: drop-shadow(0 2px 5px rgba(0,0,0,0.35));
+            transform-origin: center center;
+        }
+        .day-card { cursor: pointer; transition: box-shadow .2s; }
+        .day-card:hover:not(.editing) { box-shadow: 0 4px 18px rgba(192,57,43,.18); }
+        .day-card.active-day { box-shadow: 0 0 0 2.5px var(--primary), 0 4px 18px rgba(192,57,43,.22) !important; }
+    </style>
+</head>
+<body>
+    <div id="main-wrapper">
+        <div id="map-container"><div id="map"></div></div>
+
+        <div id="itinerary-container">
+            <!-- Edit bar -->
+            <div id="edit-bar">
+                <div id="sync-status">
+                    <span class="status-dot syncing" id="status-dot"></span>
+                    <span id="status-text">连接中...</span>
+                </div>
+                <div id="edit-controls">
+                    <button class="btn" id="btn-edit">✏️ 编辑</button>
+                    <button class="btn" id="btn-save"   hidden>💾 保存</button>
+                    <button class="btn" id="btn-cancel" hidden>✕ 取消</button>
+                </div>
+            </div>
+
+            <!-- Scrollable content -->
+            <div id="itinerary-scroll">
+                <div id="loading-overlay">
+                    <div class="spinner"></div>
+                    <div class="loading-text">正在加载数据...</div>
+                </div>
+                <div id="itinerary-content"></div>
+            </div>
+        </div>
+    </div>
+
+    <div id="toaster"></div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script type="module">
+        import { initializeApp }            from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+        import { getDatabase, ref, set, onValue } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+
+        /* ─── Firebase init ─────────────────────────────────────────────────── */
+        const firebaseConfig = {
+            apiKey:            "AIzaSyACdJyUXjs-h0XPEuJYtMg1_txxJjVnqHI",
+            authDomain:        "newmexicoroute.firebaseapp.com",
+            databaseURL:       "https://newmexicoroute-default-rtdb.firebaseio.com",
+            projectId:         "newmexicoroute",
+            storageBucket:     "newmexicoroute.firebasestorage.app",
+            messagingSenderId: "840850472144",
+            appId:             "1:840850472144:web:09481ca530880ac2d6b2d5",
+        };
+        const fbApp   = initializeApp(firebaseConfig);
+        const db      = getDatabase(fbApp);
+        const dataRef = ref(db, 'itinerary');
+
+        /* ─── Default / seed data ───────────────────────────────────────────── */
+        const DEFAULT_DATA = {
+            meta: {
+                title: "👑 8天 西南大满贯 (newmexicoroute)",
+                intro:  "点击标签跳转小红书。Day 2 调整为长途奔袭模式，争取大沙丘日落。"
+            },
+            days: [
+                {
+                    title:      "Day 1 (3.28): 落地开车半小时",
+                    driveTime:  "🚗 0.5h",
+                    highlights: ["落地开车半小时。"],
+                    spots: [],
+                    hotel: {
+                        name:    "Holiday Inn Express & Suites DFW West - Hurst",
+                        url:     "https://www.ihg.com/holidayinnexpress/hotels/us/en/hurst/dfwht/hoteldetail",
+                        address: "820 Thousand Oaks Drive, Hurst, Texas 76054 United States"
+                    }
+                },
+                {
+                    title:      "Day 2 (3.29): 牛仔小镇到阿马里洛",
+                    driveTime:  "🚗 4h",
+                    highlights: ["牛仔小镇到阿马里洛。"],
+                    spots: [
+                        { label: "牛仔小镇",     url: "https://www.xiaohongshu.com/search_result?keyword=Fort+Worth+牛仔小镇" },
+                        { label: "凯迪拉克庄园",  url: "https://www.xiaohongshu.com/search_result?keyword=Cadillac+Ranch" }
+                    ],
+                    hotel: {
+                        name:    "Courtyard Amarillo Downtown",
+                        url:     "https://www.marriott.com/hotels/travel/amacd-courtyard-amarillo-downtown/",
+                        address: "724 S Polk St, Amarillo, Texas 79101"
+                    }
+                },
+                {
+                    title:      "Day 3 (3.30): 极致穿越",
+                    driveTime:  "🚗 6.5h",
+                    highlights: ["阿马里洛——Santa Fe——Taos。"],
+                    spots: [
+                        { label: "陶斯印第安村", url: "https://www.xiaohongshu.com/search_result?keyword=Taos+Pueblo+印第安村" }
+                    ],
+                    hotel: {
+                        name:    "Fairfield Inn & Suites Alamosa",
+                        url:     "https://www.marriott.com/hotels/travel/alsfi-fairfield-inn-and-suites-alamosa/",
+                        address: "721 Mariposa St, Alamosa, Colorado 81101"
+                    }
+                },
+                {
+                    title:      "Day 4 (3.31): 沙丘与印第安村",
+                    driveTime:  "🚗 4h",
+                    highlights: ["大沙丘 然后前往mesa verde 住在mesa verde附近。"],
+                    spots: [],
+                    hotel: {
+                        name:    "Residence Inn by Marriott Durango Downtown",
+                        url:     "https://www.marriott.com/hotels/travel/drogd-residence-inn-durango-downtown/",
+                        address: "21691 US Highway 160 West, Durango, Colorado 81301 USA"
+                    }
+                },
+                {
+                    title:      "Day 5 (4.1): 悬崖与孤峰",
+                    driveTime:  "🚗 6h",
+                    highlights: ["梅萨维德 (Mesa Verde) ➔ 船岩 (Shiprock) ➔ 法明顿，法明顿 ➔ 梦幻谷 (Valley of Dreams)浅玩。"],
+                    spots: [
+                        { label: "悬崖宫殿", url: "https://www.xiaohongshu.com/search_result?keyword=Mesa+Verde" },
+                        { label: "船岩孤峰", url: "https://www.xiaohongshu.com/search_result?keyword=Shiprock+船岩" },
+                        { label: "梦幻谷",   url: "https://www.xiaohongshu.com/search_result?keyword=Valley+of+Dreams+Bisti" }
+                    ],
+                    hotel: {
+                        name:    "Courtyard by Marriott Farmington",
+                        url:     "https://www.marriott.com/hotels/travel/fmncv-courtyard-farmington/",
+                        address: "560 Scott Avenue, Farmington, New Mexico 87401 USA"
+                    }
+                },
+                {
+                    title:      "Day 6 (4.2): 法明顿 ➔ ABQ ➔ 白沙 ➔ El Paso",
+                    driveTime:  "🚗 6h",
+                    highlights: ["从法明顿出发，经阿尔伯克基，游览白沙国家公园，傍晚抵达 El Paso 入住。"],
+                    spots: [
+                        { label: "ABQ",    url: "https://www.xiaohongshu.com/search_result?keyword=Albuquerque+阿尔伯克基" },
+                        { label: "白沙日落", url: "https://www.xiaohongshu.com/search_result?keyword=White+Sands+白沙公园" }
+                    ],
+                    hotel: {
+                        name:    "TownePlace Suites by Marriott El Paso Northwest",
+                        url:     "https://www.marriott.com/hotels/travel/elptn-towneplace-suites-el-paso-northwest/",
+                        address: "6381 Berringer Street, El Paso, Texas 79932 USA"
+                    }
+                },
+                {
+                    title:      "Day 7 (4.3): El Paso 出发 ➔ Carlsbad ➔ Roswell ➔ Abilene",
+                    driveTime:  "🚗 7h",
+                    highlights: ["从 El Paso 出发，经 Carlsbad 洞穴，再去 Roswell 外星人小镇，继续前往 Abilene 住宿。"],
+                    spots: [
+                        { label: "Carlsbad 洞穴",      url: "https://www.xiaohongshu.com/search_result?keyword=Carlsbad+Caverns" },
+                        { label: "Roswell 外星人小镇",  url: "https://www.xiaohongshu.com/search_result?keyword=Roswell+UFO+外星人" },
+                        { label: "Abilene 西部小镇",    url: "https://www.abilenevisitors.com/things-to-do/attractions/" }
+                    ],
+                    hotel: {
+                        name:    "Courtyard by Marriott Abilene Southwest/Abilene Mall South",
+                        url:     "https://www.marriott.com/hotels/travel/abicy-courtyard-abilene-southwest-abilene-mall-south/",
+                        address: "4350 Ridgemont Drive, Abilene, Texas 79606 USA"
+                    }
+                },
+                {
+                    title:      "Day 8 (4.4): Abilene ➔ 达拉斯 Southlake",
+                    driveTime:  "🚗 3h",
+                    highlights: ["Abilene ➔ 返回达拉斯 Southlake 区域，轻松返程，准备次日离境或继续探索达拉斯都会区。"],
+                    spots: [],
+                    hotel: {
+                        name:    "Delta Hotels Dallas Southlake",
+                        url:     "https://www.marriott.com/hotels/travel/dfwsl-delta-hotels-dallas-southlake/",
+                        address: "251 East State Hwy 114, Southlake, Texas 76092 USA"
+                    }
+                }
+            ]
+        };
+
+        /* ─── App state ─────────────────────────────────────────────────────── */
+        let currentData        = null;
+        let isEditing          = false;
+        let hotelMarkers       = [];
+        let hotelMarkersReady  = false;
+        let spotMarkers        = [];
+
+        /* ─── Map ───────────────────────────────────────────────────────────── */
+        const map = L.map('map', { tap: false }).setView([35.0, -103.0], 5);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18 }).addTo(map);
+
+        const routeLocations = [
+            { name: "Dallas",          lat: 32.7767, lon: -96.7970 },
+            { name: "Fort Worth",      lat: 32.7887, lon: -97.3498 },
+            { name: "Amarillo",        lat: 35.2220, lon: -101.8313 },
+            { name: "Santa Fe",        lat: 35.6870, lon: -105.9378 },
+            { name: "Taos",            lat: 36.4072, lon: -105.5730 },
+            { name: "Great Sand Dunes",lat: 37.7329, lon: -105.5121 },
+            { name: "Mesa Verde",      lat: 37.2309, lon: -108.4618 },
+            { name: "Shiprock",        lat: 36.6859, lon: -108.8364 },
+            { name: "Valley of Dreams",lat: 36.1466, lon: -107.9808 },
+            { name: "Albuquerque",     lat: 35.0844, lon: -106.6504 },
+            { name: "White Sands",     lat: 32.7872, lon: -106.3257 },
+            { name: "El Paso",         lat: 31.7619, lon: -106.4850 },
+            { name: "Carlsbad",        lat: 32.1755, lon: -104.4440 },
+            { name: "Roswell",         lat: 33.3943, lon: -104.5230 },
+            { name: "Abilene",         lat: 32.4487, lon: -99.7331  },
+            { name: "Southlake",       lat: 32.9412, lon: -97.1342  }
+        ];
+        const latlngs = routeLocations.map(l => [l.lat, l.lon]);
+        routeLocations.forEach(l => L.marker([l.lat, l.lon]).addTo(map).bindPopup(l.name));
+        L.polyline(latlngs, { color: '#c0392b', weight: 4, dashArray: '8, 8' }).addTo(map);
+        setTimeout(() => map.fitBounds(latlngs, { padding: [25, 25] }), 300);
+
+        // ── Route lookup table (used by car path-following animation) ──
+        const routeTable = (() => {
+            const tbl = [{ pt: latlngs[0], cum: 0 }];
+            let cum = 0;
+            for (let i = 1; i < latlngs.length; i++) {
+                cum += Math.hypot(latlngs[i][0]-latlngs[i-1][0], latlngs[i][1]-latlngs[i-1][1]);
+                tbl.push({ pt: latlngs[i], cum });
+            }
+            return tbl;
+        })();
+        const totalRouteLen = routeTable[routeTable.length - 1].cum;
+
+        // Return lat/lng at cumulative distance d along the route
+        function getPointAtDist(d) {
+            d = Math.max(0, Math.min(d, totalRouteLen));
+            for (let i = 0; i < routeTable.length - 1; i++) {
+                if (routeTable[i+1].cum >= d) {
+                    const t  = (d - routeTable[i].cum) / (routeTable[i+1].cum - routeTable[i].cum || 1);
+                    const p1 = routeTable[i].pt, p2 = routeTable[i+1].pt;
+                    return [p1[0] + t*(p2[0]-p1[0]), p1[1] + t*(p2[1]-p1[1])];
+                }
+            }
+            return routeTable[routeTable.length - 1].pt;
+        }
+
+        // Snap an arbitrary point to the nearest point on the route, return cumulative distance
+        function snapToRoute(point) {
+            let best = 0, bestD = Infinity;
+            for (let i = 0; i < routeTable.length - 1; i++) {
+                const p1 = routeTable[i].pt, p2 = routeTable[i+1].pt;
+                const dx = p2[0]-p1[0], dy = p2[1]-p1[1];
+                const len2 = dx*dx + dy*dy;
+                const t  = len2 > 0 ? Math.max(0, Math.min(1,
+                    ((point[0]-p1[0])*dx + (point[1]-p1[1])*dy) / len2)) : 0;
+                const d  = Math.hypot(point[0]-(p1[0]+t*dx), point[1]-(p1[1]+t*dy));
+                if (d < bestD) {
+                    bestD = d;
+                    best  = routeTable[i].cum + t*(routeTable[i+1].cum - routeTable[i].cum);
+                }
+            }
+            return best;
+        }
+
+        const redIcon = L.icon({
+            iconUrl:     'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-red.png',
+            shadowUrl:   'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
+            iconSize:    [25, 41], iconAnchor:   [12, 41],
+            popupAnchor: [1, -34], shadowSize:   [41, 41]
+        });
+
+        // Approximate hotel coordinates (fallback, updated via geocoding in background)
+        const hotelFallbacks = [
+            [32.8534, -97.1888],   // Day 1 Hurst TX
+            [35.2220, -101.8313],  // Day 2 Amarillo TX
+            [37.4697, -105.8700],  // Day 3 Alamosa CO
+            [37.2753, -107.8801],  // Day 4 Durango CO
+            [36.7281, -108.2187],  // Day 5 Farmington NM
+            [31.7619, -106.4850],  // Day 6 El Paso TX
+            [32.4487, -99.7331],   // Day 7 Abilene TX
+            [32.9412, -97.1342]    // Day 8 Southlake TX
+        ];
+
+        async function geocode(address) {
+            try {
+                const res  = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(address)}`);
+                const data = await res.json();
+                if (data.length > 0) return [parseFloat(data[0].lat), parseFloat(data[0].lon)];
+            } catch (e) { /* silent */ }
+            return null;
+        }
+
+        async function addHotelMarkers(days) {
+            hotelMarkers.forEach(m => map.removeLayer(m));
+            hotelMarkers = [];
+
+            // Immediate pass: place markers at fallback coordinates
+            days.forEach((day, i) => {
+                if (!day.hotel || !hotelFallbacks[i]) return;
+                const m = L.marker(hotelFallbacks[i], { icon: redIcon })
+                    .addTo(map)
+                    .bindPopup(`🏨 Day ${i + 1}: ${esc(day.hotel.name || '')}`);
+                hotelMarkers.push(m);
+            });
+
+            // Background pass: refine positions via geocoding
+            for (let i = 0; i < days.length; i++) {
+                const addr = days[i]?.hotel?.address;
+                if (!addr || !hotelMarkers[i]) continue;
+                const coords = await geocode(addr);
+                if (coords) hotelMarkers[i].setLatLng(coords);
+                await sleep(1200); // Nominatim rate limit
+            }
+        }
+
+        async function addSpotMarkers(days) {
+            spotMarkers.forEach(m => map.removeLayer(m));
+            spotMarkers = [];
+            for (let i = 0; i < days.length; i++) {
+                const spots = toArr(days[i].spots);
+                for (const spot of spots) {
+                    if (!spot.address) continue;
+                    const coords = await geocode(spot.address);
+                    if (coords) {
+                        const m = L.circleMarker(coords, {
+                            radius: 8, color: '#1a5276', weight: 2,
+                            fillColor: '#5dade2', fillOpacity: 0.85
+                        }).addTo(map).bindPopup(`📍 Day ${i + 1}: ${esc(spot.label)}`);
+                        spotMarkers.push(m);
+                    }
+                    await sleep(1200);
+                }
+            }
+        }
+
+        /* ─── Car marker & animation ────────────────────────────────────────── */
+        const carIcon = L.divIcon({
+            html: '<span class="car-emoji">🚗</span>',
+            className: 'car-div-icon',
+            iconSize: [36, 36],
+            iconAnchor: [18, 18]
+        });
+        let carPos = [32.8534, -97.1888]; // start at Day 1 hotel (Hurst TX)
+        const carMarker = L.marker(carPos, { icon: carIcon, zIndexOffset: 2000 }).addTo(map);
+        carMarker.bindPopup('');
+        let carAnimFrame  = null;
+        let carAngle      = 0;
+        let carRouteDist  = snapToRoute(carPos); // track position as distance along route
+
+        function calcBearing(from, to) {
+            const r = d => d * Math.PI / 180;
+            const dLon = r(to[1] - from[1]);
+            const y = Math.sin(dLon) * Math.cos(r(to[0]));
+            const x = Math.cos(r(from[0])) * Math.sin(r(to[0])) - Math.sin(r(from[0])) * Math.cos(r(to[0])) * Math.cos(dLon);
+            return Math.atan2(y, x) * 180 / Math.PI;
+        }
+
+        // Local bearing of the route at cumulative distance d
+        function bearingAtDist(d) {
+            const eps = totalRouteLen * 0.004;
+            return calcBearing(
+                getPointAtDist(Math.max(0, d - eps)),
+                getPointAtDist(Math.min(totalRouteLen, d + eps))
+            );
+        }
+
+        function animateCar(targetHotel, dayIndex) {
+            if (carAnimFrame) cancelAnimationFrame(carAnimFrame);
+
+            const fromDist  = carRouteDist;
+            const toDist    = snapToRoute(targetHotel);
+            const distDelta = Math.abs(toDist - fromDist);
+            const duration  = Math.min(3000, Math.max(800, distDelta * 380 + 600));
+
+            // Disable CSS transition so per-frame rotation is instant
+            const emojiEl = carMarker.getElement()?.querySelector('.car-emoji');
+            if (emojiEl) emojiEl.style.transition = 'none';
+
+            map.flyTo(targetHotel, 7, { duration: duration / 1000 });
+
+            const startTime = performance.now();
+            function frame(now) {
+                const t    = Math.min((now - startTime) / duration, 1);
+                const ease = t < 0.5 ? 2*t*t : -1 + (4 - 2*t)*t;
+                const d    = fromDist + (toDist - fromDist) * ease;
+                const pos  = getPointAtDist(d);
+
+                carMarker.setLatLng(pos);
+                carAngle = bearingAtDist(d) + 90;
+                const el = carMarker.getElement()?.querySelector('.car-emoji');
+                if (el) el.style.transform = `rotate(${carAngle}deg)`;
+
+                if (t < 1) {
+                    carAnimFrame = requestAnimationFrame(frame);
+                } else {
+                    carRouteDist = toDist;
+                    carPos = [...pos];
+                    if (el) {
+                        el.style.transition = '';
+                        el.style.transform = `rotate(${carAngle}deg) scale(1.4)`;
+                        setTimeout(() => { if (el) el.style.transform = `rotate(${carAngle}deg) scale(1)`; }, 280);
+                    }
+                    const days = toArr(currentData?.days || []);
+                    const day  = days[dayIndex];
+                    if (day?.hotel?.name) {
+                        carMarker.getPopup().setContent(`🏨 Day ${dayIndex + 1}: ${day.hotel.name}`);
+                        carMarker.openPopup();
+                    }
+                }
+            }
+            carAnimFrame = requestAnimationFrame(frame);
+        }
+
+        // Click a day card → drive car to that hotel
+        document.getElementById('itinerary-content').addEventListener('click', e => {
+            if (isEditing) return;
+            if (e.target.closest('a')) return; // don't intercept external links
+            const card = e.target.closest('.day-card[data-day]');
+            if (!card) return;
+            const i = parseInt(card.dataset.day);
+            const coords = hotelFallbacks[i];
+            if (!coords) return;
+            document.querySelectorAll('.day-card').forEach(c => c.classList.remove('active-day'));
+            card.classList.add('active-day');
+            animateCar(coords, i);
+        });
+
+        /* ─── Helpers ───────────────────────────────────────────────────────── */
+        const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+        function esc(str) {
+            return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+        }
+
+        // Firebase stores empty arrays as null; also may store arrays as objects
+        function toArr(val) {
+            if (!val) return [];
+            if (Array.isArray(val)) return val;
+            return Object.values(val);
+        }
+
+        // highlights can be a legacy string or an array of strings
+        function toHighlights(val) {
+            if (!val) return [''];
+            if (typeof val === 'string') return [val];
+            return toArr(val).filter(s => s !== undefined);
+        }
+
+        function setStatus(state, text) {
+            const dot = document.getElementById('status-dot');
+            dot.className = 'status-dot' + (state === 'ok' ? '' : ' ' + state);
+            document.getElementById('status-text').textContent = text;
+        }
+
+        function toast(msg, type = '') {
+            const el = document.getElementById('toaster');
+            el.textContent = msg;
+            el.className = 'show ' + type;
+            clearTimeout(el._timer);
+            el._timer = setTimeout(() => { el.className = ''; }, 2800);
+        }
+
+        /* ─── Render: view mode ─────────────────────────────────────────────── */
+        function renderView(data) {
+            document.getElementById('itinerary-scroll').classList.remove('editing');
+            document.getElementById('btn-edit').hidden   = false;
+            document.getElementById('btn-save').hidden   = true;
+            document.getElementById('btn-cancel').hidden = true;
+
+            const meta = data.meta || {};
+            const days = toArr(data.days);
+
+            let html = `<h1>${esc(meta.title)}</h1><p class="intro">${esc(meta.intro)}</p>`;
+
+            days.forEach((day, i) => {
+                const spots = toArr(day.spots);
+                html += `<div class="day-card" data-day="${i}">`;
+                html += `<div class="day-title">${esc(day.title)}<span class="drive-time">${esc(day.driveTime)}</span></div>`;
+                toHighlights(day.highlights).forEach(h => {
+                    if (h) html += `<div class="highlight-block">${esc(h)}</div>`;
+                });
+
+                if (spots.length) {
+                    html += `<div class="spot-tags">`;
+                    spots.forEach(s => {
+                        html += `<a href="${esc(s.url)}" target="_blank" class="spot-tag">${esc(s.label)}</a>`;
+                    });
+                    html += `</div>`;
+                }
+
+                if (day.hotel) {
+                    html += `
+                    <div class="hotel-info">
+                        <div class="hotel-icon">🏨</div>
+                        <div class="hotel-details">
+                            <div class="hotel-name"><a href="${esc(day.hotel.url)}" target="_blank">${esc(day.hotel.name)}</a></div>
+                            <div class="hotel-address">${esc(day.hotel.address)}</div>
+                        </div>
+                    </div>`;
+                }
+                html += `</div>`;
+            });
+
+            document.getElementById('itinerary-content').innerHTML = html;
+        }
+
+        /* ─── Render: edit mode ─────────────────────────────────────────────── */
+        function renderEdit(data) {
+            document.getElementById('itinerary-scroll').classList.add('editing');
+            document.getElementById('btn-edit').hidden   = true;
+            document.getElementById('btn-save').hidden   = false;
+            document.getElementById('btn-cancel').hidden = false;
+
+            const meta = data.meta || {};
+            const days = toArr(data.days);
+
+            let html = `
+            <div class="edit-banner">
+                ✏️ <strong>编辑模式已开启</strong> — 修改完成后点击「保存」，所有人将看到最新版本。
+            </div>
+            <div class="edit-section">
+                <label class="edit-label">页面标题</label>
+                <input class="edit-field" id="meta-title" value="${esc(meta.title)}">
+            </div>
+            <div class="edit-section">
+                <label class="edit-label">页面简介</label>
+                <textarea class="edit-field edit-textarea" id="meta-intro">${esc(meta.intro)}</textarea>
+            </div>`;
+
+            days.forEach((day, i) => {
+                const spots = toArr(day.spots);
+                html += `<div class="day-card editing" data-day="${i}">`;
+
+                // Title + drive time on one row
+                html += `
+                <div class="day-title-row">
+                    <div class="main-title">
+                        <label class="edit-label">Day 标题</label>
+                        <input class="edit-field day-title-input" value="${esc(day.title)}">
+                    </div>
+                    <div class="drive-col">
+                        <label class="edit-label">驾车时间</label>
+                        <input class="edit-field drive-time-input" value="${esc(day.driveTime)}">
+                    </div>
+                </div>`;
+
+                // Highlights
+                html += `
+                <div class="edit-row">
+                    <label class="edit-label">行程描述</label>
+                    <div class="highlights-editor" id="hl-${i}">`;
+                toHighlights(day.highlights).forEach(h => {
+                    html += highlightItem(h);
+                });
+                html += `
+                        <button class="add-tag-btn" onclick="addHighlight('hl-${i}')">+ 添加描述</button>
+                    </div>
+                </div>`;
+
+                // Spot tags
+                html += `
+                <div class="edit-row">
+                    <label class="edit-label">景点标签</label>
+                    <div class="spots-editor" id="spots-${i}">`;
+                spots.forEach(s => {
+                    html += spotEditorItem(s.label, s.url, s.address || '');
+                });
+                html += `
+                        <button class="add-tag-btn" onclick="addSpot('spots-${i}')">+ 添加景点</button>
+                    </div>
+                </div>`;
+
+                // Hotel
+                html += `
+                <div class="hotel-edit-block">
+                    <div class="hotel-edit-header">🏨 住宿信息</div>
+                    <div class="edit-row">
+                        <label class="edit-label">酒店名称</label>
+                        <input class="edit-field hotel-name-input" value="${esc(day.hotel?.name || '')}">
+                    </div>
+                    <div class="edit-row">
+                        <label class="edit-label">酒店网址</label>
+                        <input class="edit-field hotel-url-input" value="${esc(day.hotel?.url || '')}">
+                    </div>
+                    <div class="edit-row" style="margin-bottom:0">
+                        <label class="edit-label">酒店地址</label>
+                        <input class="edit-field hotel-address-input" value="${esc(day.hotel?.address || '')}">
+                    </div>
+                </div>`;
+
+                html += `</div>`; // end .day-card
+            });
+
+            document.getElementById('itinerary-content').innerHTML = html;
+        }
+
+        function highlightItem(text) {
+            return `
+            <div class="highlight-item">
+                <textarea class="edit-field edit-textarea highlight-text-input">${esc(text)}</textarea>
+                <button class="tag-delete-btn" title="删除此段描述" onclick="this.closest('.highlight-item').remove()">✕</button>
+            </div>`;
+        }
+
+        function spotEditorItem(label, url, address = '') {
+            return `
+            <div class="spot-editor-item">
+                <div class="spot-editor-top">
+                    <input class="edit-field spot-label-input" placeholder="景点名称" value="${esc(label)}">
+                    <button class="tag-delete-btn" title="删除景点" onclick="this.closest('.spot-editor-item').remove()">✕</button>
+                </div>
+                <input class="edit-field spot-url-input" placeholder="链接 URL（点标签跳转）" value="${esc(url)}">
+                <input class="edit-field spot-address-input" placeholder="地点地址（可选，填写后将在地图打蓝色标记）" value="${esc(address)}">
+            </div>`;
+        }
+
+        /* ─── Global helpers called from inline onclick ─────────────────────── */
+        window.addHighlight = function(containerId) {
+            const container = document.getElementById(containerId);
+            const addBtn    = container.querySelector('.add-tag-btn');
+            const div       = document.createElement('div');
+            div.innerHTML   = highlightItem('');
+            const item      = div.firstElementChild;
+            container.insertBefore(item, addBtn);
+            item.querySelector('textarea').focus();
+        };
+
+        window.addSpot = function(containerId) {
+            const container = document.getElementById(containerId);
+            const addBtn    = container.querySelector('.add-tag-btn');
+            const div       = document.createElement('div');
+            div.innerHTML   = spotEditorItem('', '', '');
+            const item      = div.firstElementChild;
+            container.insertBefore(item, addBtn);
+            item.querySelector('.spot-label-input').focus();
+        };
+
+        /* ─── Collect form data ──────────────────────────────────────────────── */
+        function collectData() {
+            const days = [];
+            document.querySelectorAll('.day-card.editing').forEach(card => {
+                const spots = [];
+                card.querySelectorAll('.spot-editor-item').forEach(item => {
+                    const label   = item.querySelector('.spot-label-input').value.trim();
+                    const url     = item.querySelector('.spot-url-input').value.trim();
+                    const address = item.querySelector('.spot-address-input').value.trim();
+                    if (label) spots.push({ label, url, address });
+                });
+                const highlights = [];
+                card.querySelectorAll('.highlight-text-input').forEach(ta => {
+                    const v = ta.value.trim();
+                    if (v) highlights.push(v);
+                });
+                days.push({
+                    title:      card.querySelector('.day-title-input').value.trim(),
+                    driveTime:  card.querySelector('.drive-time-input').value.trim(),
+                    highlights,
+                    spots,
+                    hotel: {
+                        name:    card.querySelector('.hotel-name-input').value.trim(),
+                        url:     card.querySelector('.hotel-url-input').value.trim(),
+                        address: card.querySelector('.hotel-address-input').value.trim()
+                    }
+                });
+            });
+            return {
+                meta: {
+                    title: document.getElementById('meta-title').value.trim(),
+                    intro: document.getElementById('meta-intro').value.trim()
+                },
+                days
+            };
+        }
+
+        /* ─── Button handlers ───────────────────────────────────────────────── */
+        document.getElementById('btn-edit').addEventListener('click', () => {
+            isEditing = true;
+            renderEdit(currentData);
+        });
+
+        document.getElementById('btn-cancel').addEventListener('click', () => {
+            isEditing = false;
+            renderView(currentData);
+        });
+
+        document.getElementById('btn-save').addEventListener('click', async () => {
+            const btn = document.getElementById('btn-save');
+            btn.disabled = true;
+            btn.textContent = '⏳ 保存中...';
+            setStatus('syncing', '同步中...');
+            try {
+                const newData = collectData();
+                await set(dataRef, newData);
+                currentData = newData;
+                isEditing = false;
+                renderView(currentData);
+                // Refresh hotel and spot markers after save
+                hotelMarkersReady = false;
+                addHotelMarkers(toArr(currentData.days))
+                    .then(() => addSpotMarkers(toArr(currentData.days)));
+                hotelMarkersReady = true;
+                toast('保存成功！所有人将看到最新内容。', 'success');
+                setStatus('ok', '已同步');
+            } catch (err) {
+                console.error('Save error:', err);
+                toast('保存失败，请检查网络或数据库权限。', 'error');
+                setStatus('error', '同步失败');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '💾 保存';
+            }
+        });
+
+        /* ─── Firebase real-time listener ───────────────────────────────────── */
+        setStatus('syncing', '连接中...');
+
+        onValue(dataRef, (snapshot) => {
+            document.getElementById('loading-overlay').style.display = 'none';
+
+            if (snapshot.exists()) {
+                const remoteData = snapshot.val();
+                if (!isEditing) {
+                    currentData = remoteData;
+                    renderView(currentData);
+                    if (!hotelMarkersReady) {
+                        addHotelMarkers(toArr(currentData.days))
+                            .then(() => addSpotMarkers(toArr(currentData.days)));
+                        hotelMarkersReady = true;
+                    }
+                }
+                setStatus('ok', '已同步');
+            } else {
+                // First run: seed Firebase with default data
+                set(dataRef, DEFAULT_DATA).then(() => {
+                    currentData = DEFAULT_DATA;
+                    renderView(currentData);
+                    addHotelMarkers(toArr(currentData.days))
+                        .then(() => addSpotMarkers(toArr(currentData.days)));
+                    hotelMarkersReady = true;
+                    setStatus('ok', '已同步');
+                    toast('已初始化默认数据。', 'success');
+                }).catch(err => {
+                    console.error('Seed error:', err);
+                    // Still show default data locally
+                    currentData = DEFAULT_DATA;
+                    renderView(currentData);
+                    setStatus('error', '初始化失败');
+                    toast('数据库写入失败，请检查 Firebase 规则。', 'error');
+                });
+            }
+        }, (error) => {
+            console.error('Firebase onValue error:', error);
+            document.getElementById('loading-overlay').style.display = 'none';
+            setStatus('error', '连接失败');
+            if (!currentData) {
+                currentData = DEFAULT_DATA;
+                renderView(currentData);
+                toast('无法连接数据库，显示本地默认数据。', 'error');
+            }
+        });
+    </script>
+</body>
+</html>
