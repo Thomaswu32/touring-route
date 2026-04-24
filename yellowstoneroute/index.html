@@ -233,6 +233,23 @@
             border: 1px solid #ffb74d; border-radius: 4px;
             padding: 2px 7px; margin-left: 6px; vertical-align: middle;
         }
+
+        /* ── Mode toggle bar ── */
+        #mode-bar {
+            display: flex; gap: 8px; padding: 8px 16px;
+            background: #f8f9fa; border-bottom: 1px solid #e8e8e8;
+            flex-shrink: 0;
+        }
+        .mode-btn {
+            flex: 1; padding: 6px 10px;
+            border: 1.5px solid #ddd; border-radius: 8px;
+            background: #fff; color: #666;
+            font-size: 12px; font-weight: 600; cursor: pointer;
+            transition: all .18s; text-align: center;
+        }
+        .mode-btn.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+        .mode-btn:not(.active):hover { background: #e8f5e9; border-color: var(--primary); color: var(--primary); }
+        #itinerary-content { transition: opacity .25s; }
     </style>
 </head>
 <body>
@@ -250,6 +267,11 @@
                     <button class="btn" id="btn-save"   hidden>💾 保存</button>
                     <button class="btn" id="btn-cancel" hidden>✕ 取消</button>
                 </div>
+            </div>
+
+            <div id="mode-bar">
+                <button class="mode-btn active" id="btn-mode-full">📅 7日全程版</button>
+                <button class="mode-btn" id="btn-mode-short">⚡ 黄石3天精华版</button>
             </div>
 
             <div id="itinerary-scroll">
@@ -279,9 +301,12 @@
             messagingSenderId: "840850472144",
             appId:             "1:840850472144:web:09481ca530880ac2d6b2d5",
         };
-        const fbApp   = initializeApp(firebaseConfig);
-        const db      = getDatabase(fbApp);
-        const dataRef = ref(db, 'yellowstone');
+        const fbApp      = initializeApp(firebaseConfig);
+        const db         = getDatabase(fbApp);
+        const dataRefFull  = ref(db, 'yellowstone');
+        const dataRefShort = ref(db, 'yellowstone3');
+        let activeRef     = dataRefFull;
+        let activeDefault = null;
 
         /* ─── Default / seed data ────────────────────────────────────────── */
         const DEFAULT_DATA = {
@@ -447,12 +472,89 @@
             ]
         };
 
+        const DEFAULT_DATA_3DAY = {
+            meta: {
+                title: "⚡ 黄石3天精华版（最终执行版）",
+                intro: "从杰克逊出发，专注黄石核心景点。住西黄石3晚，路线紧凑高效。点击行程卡片追踪路线动画，点击景点标签跳转小红书。"
+            },
+            days: [
+                {
+                    title:     "Day 1 · 南门进园 · 地热核心",
+                    driveTime: "🚗 Jackson→南门 ~1h",
+                    highlights: [
+                        "09:30 Jackson出发 → 约1小时到南门 → 10:30 进入黄石。",
+                        "11:00–11:40 West Thumb Geyser Basin：沿湖走一圈，地热 + 黄石湖并存，5月可能有浮冰。",
+                        "12:30–14:00 Old Faithful：先到游客中心查屏幕或下载 Geyser Times App 确认喷发时间，看一次喷发 → 顺路走 Morning Glory Pool。在这里吃午饭（Bear Paw Deli 汉堡 $14）。",
+                        "14:30–16:00【必须这个时间段】大棱镜温泉俯瞰：停 Fairy Falls Trailhead（GPS: 44.5305, -110.8394），步行约 20 分钟上观景台，可看到完整彩虹圆形。",
+                        "16:15–17:15 Fountain Paint Pot：Clepsydra Geyser 几乎不间断喷发，5月蒸汽柱比夏天高 2-3 倍。",
+                        "18:00 离开 → 西门住宿。"
+                    ],
+                    spots: [
+                        { label: "West Thumb间歇泉", url: "https://www.xiaohongshu.com/search_result?keyword=West+Thumb+黄石" },
+                        { label: "老忠实间歇泉", url: "https://www.xiaohongshu.com/search_result?keyword=老忠实+Old+Faithful+黄石" },
+                        { label: "大棱镜俯瞰", url: "https://www.xiaohongshu.com/search_result?keyword=大棱镜+Grand+Prismatic" },
+                        { label: "Fountain Paint Pot", url: "https://www.xiaohongshu.com/search_result?keyword=Fountain+Paint+Pot+黄石" }
+                    ],
+                    hotel: {
+                        name:    "Holiday Inn West Yellowstone",
+                        url:     "https://www.ihg.com/holidayinn/hotels/us/en/west-yellowstone/ylsmt/hoteldetail",
+                        address: "315 Yellowstone Ave, West Yellowstone, MT 59758"
+                    }
+                },
+                {
+                    title:     "Day 2 · Lamar Valley + 北线",
+                    driveTime: "🚗 西门→Lamar ~2h",
+                    highlights: [
+                        "08:30 从西门出发（车程较长约2小时到Lamar，稍早起）。",
+                        "10:30–13:00 拉玛山谷：找停车点停靠观察，看到有人架望远镜就跟上，这是黄石 spotting 社区的默契，护林员也会告知动物位置。慢慢开，不要赶。5月 Red Dogs 野牛幼崽几乎 100% 可见，黑熊上午约 20% 概率。",
+                        "13:30 午饭：Roosevelt Lodge（野牛香肠炒蛋 $16，越橘薄饼 $14）或自带野餐。",
+                        "14:30–15:00【可选】Tower Fall：顺路快速看，40米瀑布，5分钟步行。",
+                        "16:30 开始往回走，沿途随时停车看动物，不用赶。19:30–20:00 沿途找开阔地简单看日落，不用特意跑点。20:30 左右回到西门。"
+                    ],
+                    spots: [
+                        { label: "拉玛山谷野牛崽", url: "https://www.xiaohongshu.com/search_result?keyword=拉玛山谷+Lamar+Valley+野牛" },
+                        { label: "Red Dogs", url: "https://www.xiaohongshu.com/search_result?keyword=Red+Dogs+Bison+黄石" },
+                        { label: "Tower Fall", url: "https://www.xiaohongshu.com/search_result?keyword=Tower+Fall+黄石" }
+                    ],
+                    hotel: {
+                        name:    "Holiday Inn West Yellowstone",
+                        url:     "https://www.ihg.com/holidayinn/hotels/us/en/west-yellowstone/ylsmt/hoteldetail",
+                        address: "315 Yellowstone Ave, West Yellowstone, MT 59758"
+                    }
+                },
+                {
+                    title:     "Day 3 · 峡谷 + Hayden日落收尾",
+                    driveTime: "🚗 西门→Canyon ~1h",
+                    highlights: [
+                        "10:00 从西门出发。11:00–11:40 泥浆火山：Dragon's Mouth Spring 轰鸣声 + 翻腾泥浆，全园最具冲击力的感官体验（0.75英里环线）。",
+                        "12:00–13:00 Canyon Village 午饭 + 加油（园内少数有加油站的地方，必须加满）。",
+                        "13:00–16:30 黄石大峡谷 Artist Point（GPS: 44.7188, -110.4672）：5月雪融水让 Lower Falls 水量达全年最大，白色瀑布宽度是夏季2倍。先走南缘主视角，时间够再去北缘 Lookout Point 看峡谷全貌。",
+                        "17:00–18:00 自由活动 / 休息 / 随便补点位。",
+                        "18:30–20:30【日落核心】Hayden Valley：找停车点停下，看野牛 + 日落光线，不用走路。灰熊傍晚也有一定概率出现。20:30 离开 → 返回西门。"
+                    ],
+                    spots: [
+                        { label: "泥浆火山", url: "https://www.xiaohongshu.com/search_result?keyword=Mud+Volcano+Dragon+Mouth+黄石" },
+                        { label: "Artist Point峡谷", url: "https://www.xiaohongshu.com/search_result?keyword=Artist+Point+黄石大峡谷" },
+                        { label: "Hayden Valley日落", url: "https://www.xiaohongshu.com/search_result?keyword=Hayden+Valley+黄石+日落" },
+                        { label: "Lower Falls", url: "https://www.xiaohongshu.com/search_result?keyword=Lower+Falls+黄石大峡谷" }
+                    ],
+                    hotel: {
+                        name:    "Holiday Inn West Yellowstone（返回西门）",
+                        url:     "https://www.ihg.com/holidayinn/hotels/us/en/west-yellowstone/ylsmt/hoteldetail",
+                        address: "315 Yellowstone Ave, West Yellowstone, MT 59758"
+                    }
+                }
+            ]
+        };
+
         /* ─── App state ──────────────────────────────────────────────────── */
         let currentData       = null;
+        let currentMode       = 'full';
         let isEditing         = false;
         let hotelMarkers      = [];
         let spotMarkers       = [];
         let hotelMarkersAdded = false;
+        let unsubscribe       = null;
 
         /* ─── Map ────────────────────────────────────────────────────────── */
         const map = L.map('map', { tap: false }).setView([43.5, -111.0], 6);
@@ -532,16 +634,24 @@
             return best;
         }
 
-        // Hotel fallback coords: one per day (Day 0 → Day 6)
-        const hotelFallbacks = [
+        // Hotel fallback coords per mode
+        const hotelFallbacksFull = [
             [43.4799, -110.7624],  // Day 0: Jackson
             [43.4799, -110.7624],  // Day 1: Jackson
             [44.6597, -111.0999],  // Day 2: West Yellowstone
             [44.6597, -111.0999],  // Day 3: West Yellowstone
-            [44.6574, -110.4854],  // Day 4: near Canyon (Hayden Valley area for animation variety)
-            [44.9281, -110.2371],  // Day 5: Lamar Valley area (for animation variety)
+            [44.6574, -110.4854],  // Day 4: Canyon/Hayden area
+            [44.9281, -110.2371],  // Day 5: Lamar Valley
             [40.7884, -111.9779],  // Day 6: SLC
         ];
+        const hotelFallbacksShort = [
+            [44.6597, -111.0999],  // Day 1: West Yellowstone
+            [44.9281, -110.2371],  // Day 2: Lamar Valley
+            [44.6574, -110.4854],  // Day 3: Hayden Valley
+        ];
+        function getFallback(i) {
+            return (currentMode === 'short' ? hotelFallbacksShort : hotelFallbacksFull)[i];
+        }
 
         const greenIcon = L.icon({
             iconUrl:     'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-green.png',
@@ -563,10 +673,10 @@
             hotelMarkers.forEach(m => map.removeLayer(m));
             hotelMarkers = [];
             days.forEach((day, i) => {
-                if (!day.hotel || !hotelFallbacks[i]) return;
+                if (!day.hotel || !getFallback(i)) return;
                 const label = day.hotel.name || '';
                 if (label.includes('无需住宿') || label.includes('✈️')) return;
-                const m = L.marker(hotelFallbacks[i], { icon: greenIcon })
+                const m = L.marker(getFallback(i), { icon: greenIcon })
                     .addTo(map)
                     .bindPopup(`🏨 Day ${i}: ${esc(label)}`);
                 hotelMarkers.push(m);
@@ -685,7 +795,7 @@
             const card = e.target.closest('.day-card[data-day]');
             if (!card) return;
             const i = parseInt(card.dataset.day);
-            const coords = hotelFallbacks[i];
+            const coords = getFallback(i);
             if (!coords) return;
             document.querySelectorAll('.day-card').forEach(c => c.classList.remove('active-day'));
             card.classList.add('active-day');
@@ -954,7 +1064,7 @@
             setStatus('syncing', '同步中...');
             try {
                 const newData = collectData();
-                await set(dataRef, newData);
+                await set(activeRef, newData);
                 currentData = newData;
                 isEditing   = false;
                 renderView(currentData);
@@ -974,51 +1084,84 @@
             }
         });
 
-        /* ─── Firebase real-time listener ────────────────────────────────── */
-        setStatus('syncing', '连接中...');
+        /* ─── Mode switching + Firebase listener ─────────────────────────── */
+        function activateMode(mode) {
+            currentMode   = mode;
+            activeRef     = mode === 'full' ? dataRefFull : dataRefShort;
+            activeDefault = mode === 'full' ? DEFAULT_DATA : DEFAULT_DATA_3DAY;
 
-        onValue(dataRef, (snapshot) => {
-            document.getElementById('loading-overlay').style.display = 'none';
+            document.getElementById('btn-mode-full').classList.toggle('active', mode === 'full');
+            document.getElementById('btn-mode-short').classList.toggle('active', mode === 'short');
 
-            if (snapshot.exists()) {
-                const remoteData = snapshot.val();
-                if (!isEditing) {
-                    currentData = remoteData;
-                    renderView(currentData);
-                    if (!hotelMarkersAdded) {
+            if (isEditing) {
+                isEditing = false;
+                document.getElementById('btn-edit').hidden   = false;
+                document.getElementById('btn-save').hidden   = true;
+                document.getElementById('btn-cancel').hidden = true;
+                document.getElementById('itinerary-scroll').classList.remove('editing');
+            }
+
+            if (unsubscribe) { unsubscribe(); unsubscribe = null; }
+            hotelMarkersAdded = false;
+            currentData = null;
+
+            const content = document.getElementById('itinerary-content');
+            content.style.opacity = '0';
+            setStatus('syncing', '连接中...');
+
+            unsubscribe = onValue(activeRef, (snapshot) => {
+                document.getElementById('loading-overlay').style.display = 'none';
+                setTimeout(() => { content.style.opacity = '1'; }, 50);
+
+                if (snapshot.exists()) {
+                    if (!isEditing) {
+                        currentData = snapshot.val();
+                        renderView(currentData);
+                        if (!hotelMarkersAdded) {
+                            addHotelMarkers(toArr(currentData.days))
+                                .then(() => addSpotMarkers(toArr(currentData.days)));
+                            hotelMarkersAdded = true;
+                        }
+                    }
+                    setStatus('ok', '已同步');
+                } else {
+                    set(activeRef, activeDefault).then(() => {
+                        currentData = activeDefault;
+                        renderView(currentData);
                         addHotelMarkers(toArr(currentData.days))
                             .then(() => addSpotMarkers(toArr(currentData.days)));
                         hotelMarkersAdded = true;
-                    }
+                        setStatus('ok', '已同步');
+                        toast('已初始化默认数据。', 'success');
+                    }).catch(err => {
+                        console.error('Seed error:', err);
+                        currentData = activeDefault;
+                        renderView(currentData);
+                        setStatus('error', '初始化失败');
+                        toast('数据库写入失败，请检查 Firebase 规则。', 'error');
+                    });
                 }
-                setStatus('ok', '已同步');
-            } else {
-                set(dataRef, DEFAULT_DATA).then(() => {
-                    currentData = DEFAULT_DATA;
+            }, (error) => {
+                console.error('Firebase error:', error);
+                document.getElementById('loading-overlay').style.display = 'none';
+                content.style.opacity = '1';
+                setStatus('error', '连接失败');
+                if (!currentData) {
+                    currentData = activeDefault;
                     renderView(currentData);
-                    addHotelMarkers(toArr(currentData.days))
-                        .then(() => addSpotMarkers(toArr(currentData.days)));
-                    hotelMarkersAdded = true;
-                    setStatus('ok', '已同步');
-                    toast('已初始化默认数据。', 'success');
-                }).catch(err => {
-                    console.error('Seed error:', err);
-                    currentData = DEFAULT_DATA;
-                    renderView(currentData);
-                    setStatus('error', '初始化失败');
-                    toast('数据库写入失败，请检查 Firebase 规则。', 'error');
-                });
-            }
-        }, (error) => {
-            console.error('Firebase error:', error);
-            document.getElementById('loading-overlay').style.display = 'none';
-            setStatus('error', '连接失败');
-            if (!currentData) {
-                currentData = DEFAULT_DATA;
-                renderView(currentData);
-                toast('无法连接数据库，显示本地默认数据。', 'error');
-            }
+                    toast('无法连接数据库，显示本地默认数据。', 'error');
+                }
+            });
+        }
+
+        document.getElementById('btn-mode-full').addEventListener('click', () => {
+            if (currentMode !== 'full') activateMode('full');
         });
+        document.getElementById('btn-mode-short').addEventListener('click', () => {
+            if (currentMode !== 'short') activateMode('short');
+        });
+
+        activateMode('full');
     </script>
 </body>
 </html>
